@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+JingNiGateway 配置文件
+======================
+
+本文件包含 JingNiGateway 服务的所有配置项。
+
+配置分类:
+- 基础服务配置: API 端口、日志级别等
+- xtquant 配置: MiniQMT 路径、账户信息等
+- gm (掘金量化) 配置: Token、策略 ID 等
+
+使用方法:
+    from config import config
+    
+    # 访问配置项
+    api_key = config.API_KEY
+    gm_token = config.GM.token
+
+环境变量支持:
+    部分配置项支持通过环境变量覆盖，优先级: 环境变量 > 配置文件
+"""
+
+from datetime import datetime
+from typing import Optional
+import os
+
+
+class GMConfig:
+    """
+    掘金量化 (gm) 配置类
+    
+    用于配置 GM 量化平台的连接参数和运行模式。
+    
+    Attributes:
+        enabled: 是否启用 GM 模块
+        token: 掘金量化 API Token
+        strategy_id: 策略 ID
+        account_id: 资金账户 ID
+    
+    Example:
+        >>> gm_config = GMConfig(
+        ...     enabled=True,
+        ...     token="your-token",
+        ...     strategy_id="your-strategy-id",
+        ... )
+    """
+    
+    def __init__(
+        self,
+        enabled: bool = True,
+        token: str = "fdd22d0256b6d1eb6f1e3fa8d817666721d2750e",
+        strategy_id: str = "a937127b-a976-11f0-88fc-c6a2dd19a86c",
+        account_id: str = "11977377-992a-11f0-854e-00163e022aa6"
+    ):
+        """
+        初始化 GM 配置
+        
+        Args:
+            enabled: 是否启用 GM 模块，默认 True
+            token:   从掘金量化客户端[系统设置]-[密钥管理(Token)]获取API Token
+            strategy_id: 策略 ID，用于标识策略
+        """
+        self.enabled: bool = enabled
+        self.token: str = token
+        self.strategy_id: str = strategy_id
+        self.account_id: str = account_id
+
+
+class Config:
+    """
+    JingNiGateway 主配置类
+    
+    包含服务运行所需的所有配置项。
+    
+    配置项说明:
+        MINI_QMT_PATH: MiniQMT 客户端软件路径，xtquant 模块需要
+        ACCOUNT_ID: MiniQMT 资金账户 ID
+        API_KEY: API 认证密钥，客户端请求时需要携带
+        API_HOST: 服务监听地址
+        API_PORT: 服务监听端口
+        LOG_LEVEL: 日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
+        LOG_FILE: 日志文件路径
+        CONNECT_TIMEOUT: xtquant 连接超时时间(秒)
+        GM: 掘金量化配置对象
+    
+    Example:
+        >>> from config import config
+        >>> print(f"服务将运行在 {config.API_HOST}:{config.API_PORT}")
+        >>> print(f"GM 模块启用状态: {config.GM.enabled}")
+    """
+    
+    # ============================================
+    # xtquant (迅投 QMT) 配置
+    # ============================================
+    
+    # MiniQMT 客户端软件路径
+    # 注意: 需要指向 userdata_mini 目录，xtquant 模块依赖此路径
+    # Windows 示例: r"D:\gjzq\qmt\userdata_mini"
+    MINI_QMT_PATH: str = r"D:\gjzq\qmt\userdata_mini"
+    
+    # MiniQMT 客户端资金账户
+    # 必须是真实有效的 QMT 账户，用于交易接口
+    ACCOUNT_ID: str = "8880777575"
+
+    # ============================================
+    # API 服务配置
+    # ============================================
+    
+    # API 认证密钥
+    # 安全提示: 生产环境请使用强随机字符串，长度建议 32 位以上
+    # 客户端请求时需在 Header 中携带: X-API-Key: your-api-key
+    # 或在 URL 参数中携带: ?api_key=your-api-key
+    API_KEY: str = "xiaodudu"
+    
+    # 服务监听地址
+    # "0.0.0.0" 表示监听所有网络接口，允许外部访问
+    # "127.0.0.1" 表示仅监听本地，只允许本机访问
+    API_HOST: str = "0.0.0.0"
+    
+    # 服务监听端口
+    # 默认 8000，如果被占用可修改为其他端口如 8080, 9000 等
+    API_PORT: int = 8000
+    
+    # ============================================
+    # 日志配置
+    # ============================================
+    
+    # 日志级别
+    # DEBUG: 最详细，包含所有调试信息
+    # INFO: 一般信息，推荐日常使用
+    # WARNING: 仅警告和错误
+    # ERROR: 仅错误
+    # CRITICAL: 仅严重错误
+    LOG_LEVEL: str = "INFO"
+    
+    # 日志文件路径
+    # 如果为相对路径，则相对于项目根目录
+    # 设置为 None 或空字符串则不写入文件，仅输出到控制台
+    LOG_FILE: str = "xtquant_proxy.log"
+    
+    # ============================================
+    # xtquant 连接配置
+    # ============================================
+    
+    # xtquant 连接超时时间（秒）
+    # 连接 QMT 客户端时的最大等待时间
+    CONNECT_TIMEOUT: int = 30
+    
+    # ============================================
+    # gm (掘金量化) 配置
+    # ============================================
+    
+    # GM 配置对象
+    # 详细配置见 GMConfig 类
+    GM: GMConfig = GMConfig(
+        enabled=True,
+        token="fdd22d0256b6d1eb6f1e3fa8d817666721d2750e",
+        strategy_id="a937127b-a976-11f0-88fc-c6a2dd19a86c"
+    )
+    
+    # ============================================
+    # 高级配置 (一般不需要修改)
+    # ============================================
+    
+    # WebSocket 心跳间隔（秒）
+    # 用于检测客户端连接状态
+    WS_HEARTBEAT_INTERVAL: int = 30
+    
+    # RPC 调用默认超时时间（秒）
+    # 单个 RPC 调用的最大执行时间
+    RPC_DEFAULT_TIMEOUT: int = 30
+    
+    # 最大并发连接数
+    # WebSocket 最大客户端连接数
+    MAX_CONNECTIONS: int = 100
+
+
+# 全局配置实例
+# 在项目中通过以下方式导入使用:
+#   from config import config
+#   print(config.API_KEY)
+config = Config()
+
+
+# 环境变量覆盖支持
+# 允许通过环境变量覆盖部分配置，优先级: 环境变量 > 配置文件
+def _load_env_config():
+    """从环境变量加载配置覆盖"""
+    if os.getenv("JINGNI_API_KEY"):
+        config.API_KEY = os.getenv("JINGNI_API_KEY")
+    
+    if os.getenv("JINGNI_API_PORT"):
+        config.API_PORT = int(os.getenv("JINGNI_API_PORT"))
+    
+    if os.getenv("JINGNI_LOG_LEVEL"):
+        config.LOG_LEVEL = os.getenv("JINGNI_LOG_LEVEL")
+    
+    if os.getenv("JINGNI_GM_TOKEN"):
+        config.GM.token = os.getenv("JINGNI_GM_TOKEN")
+    
+    if os.getenv("JINGNI_GM_STRATEGY_ID"):
+        config.GM.strategy_id = os.getenv("JINGNI_GM_STRATEGY_ID")
+
+
+# 加载环境变量配置
+_load_env_config()
