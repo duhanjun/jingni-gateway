@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # JingNiGateway
 
 <p align="center">
@@ -456,3 +457,6 @@ MIT License
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
+=======
+# jingni-gateway
+>>>>>>> ade59ef18e65f9c8b222be5d8dc9a8a10041b5b6
