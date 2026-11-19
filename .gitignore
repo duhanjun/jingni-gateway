@@ -22,6 +22,7 @@ wheels/
 
 # Virtual Environment
 .venv/
+.venv310/
 venv/
 ENV/
 env/
@@ -67,3 +68,5 @@ temp/
 *.feather
 *.pkl
 test_reports/
+# 本地幂等/状态数据库（含委托流水，不入库）
+data/*.sqlite3

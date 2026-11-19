@@ -15,7 +15,7 @@ RPC 执行模块。
 - gmtrade: GM (掘金量化) 交易模块
 """
 
-import concurrent.futures
+import asyncio
 import inspect
 import logging
 import traceback
@@ -23,8 +23,72 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from providers.base import serialize_data
+from .executor import run_module_call
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidRpcArguments(ValueError):
+    """RPC 参数校验失败。"""
+
+    error_code = "INVALID_ARGUMENT"
+
+    def __init__(self, message: str, unknown: Optional[List[str]] = None,
+                 missing: Optional[List[str]] = None):
+        super().__init__(message)
+        self.unknown = unknown or []
+        self.missing = missing or []
+
+
+def validate_kwargs(func: Any, kwargs: Dict[str, Any]) -> None:
+    """
+    按函数签名校验关键字参数。
+
+    与旧实现不同：未知参数不再被静默丢弃，而是直接报错，
+    避免调用方以为参数生效、实际却用了默认值。
+
+    参数：
+        func: 可调用对象
+        kwargs: 待校验的关键字参数
+
+    异常：
+        InvalidRpcArguments: 存在未知参数或缺少必填参数
+    """
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        # C 扩展/内建函数可能没有签名，交给底层自行报错
+        return
+
+    params = signature.parameters
+    accepts_var_kw = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    allowed = {
+        name for name, p in params.items()
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                      inspect.Parameter.KEYWORD_ONLY)
+    }
+
+    unknown = sorted(set(kwargs) - allowed)
+    if unknown and not accepts_var_kw:
+        raise InvalidRpcArguments(
+            f"未知参数: {', '.join(unknown)}；允许的参数: {', '.join(sorted(allowed)) or '无'}",
+            unknown=unknown,
+        )
+
+    missing = [
+        name for name, p in params.items()
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                      inspect.Parameter.KEYWORD_ONLY)
+        and p.default is inspect.Parameter.empty
+        and name not in kwargs
+    ]
+    if missing:
+        raise InvalidRpcArguments(
+            f"缺少必填参数: {', '.join(missing)}",
+            missing=missing,
+        )
 
 _xtdata_module = None
 _xttrader_module = None
@@ -334,7 +398,13 @@ async def execute_rpc_call(
             }
 
         if module == "xttrader":
-            result = execute_xttrader_method(function, args, kwargs)
+            result = await run_module_call(
+                "xttrader",
+                execute_xttrader_method,
+                (function, args, kwargs),
+                timeout=timeout,
+                lane="trade",
+            )
             execution_time = (datetime.now() - start_time).total_seconds() * 1000
             result["module"] = module
             result["function"] = function
@@ -367,12 +437,11 @@ async def execute_rpc_call(
                 logger.debug(f"  适配后的参数: {adapted_kwargs}")
                 kwargs = adapted_kwargs
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(func, *args, **kwargs)
-            try:
-                result = future.result(timeout=timeout)
-            except concurrent.futures.TimeoutError:
-                raise TimeoutError(f"函数执行超时 ({timeout}秒)")
+        validate_kwargs(func, kwargs)
+        result = await run_module_call(
+            module, func, args, kwargs, timeout=timeout,
+            lane="trade" if module == "gmtrade" else "data",
+        )
 
         serialized_result = serialize_data(result)
 
@@ -388,6 +457,18 @@ async def execute_rpc_call(
             "execution_time_ms": execution_time
         }
 
+    except InvalidRpcArguments as e:
+        logger.warning(f"RPC 参数校验失败: {module}.{function}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "error_code": e.error_code,
+            "unknown_params": e.unknown,
+            "missing_params": e.missing,
+            "module": module,
+            "function": function,
+            "execution_time_ms": (datetime.now() - start_time).total_seconds() * 1000
+        }
     except TimeoutError as e:
         logger.error(f"RPC 调用超时: {module}.{function}")
         return {

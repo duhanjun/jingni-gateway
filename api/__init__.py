@@ -12,6 +12,7 @@ API 路由模块。
 
 from .gm import router as gm_router
 from .xtquant import router as xtquant_router
+from .tdxquant import router as tdx_router
 from .deps import get_api_key, get_api_key_dependency
 
-__all__ = ['gm_router', 'xtquant_router', 'get_api_key', 'get_api_key_dependency']
+__all__ = ['gm_router', 'xtquant_router', 'tdx_router', 'get_api_key', 'get_api_key_dependency']

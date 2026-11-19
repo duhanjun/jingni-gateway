@@ -16,22 +16,23 @@ GM (掘金量化) API 路由模块。
 """
 
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
-import inspect
-import concurrent.futures
 
 from models.common import RpcExecuteRequest, SymbolConvertRequest
 from providers.base import serialize_data
 from api.deps import get_api_key
+from core.executor import run_module_call
+from core.gm_trade import GMConfigError, GMNotLoggedInError, GMTradeError, GMTradeService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/gm", tags=["GM"])
 
 _gm_provider_instance = None
+_gm_trade_service = None
 
 
 def get_gm_provider():
@@ -59,8 +60,45 @@ def set_gm_provider(provider):
     参数：
         provider: GMProvider 实例
     """
-    global _gm_provider_instance
+    global _gm_provider_instance, _gm_trade_service
     _gm_provider_instance = provider
+    _gm_trade_service = None
+
+
+def get_gm_trade_service() -> GMTradeService:
+    global _gm_trade_service
+    if _gm_trade_service is None:
+        from config import config
+        provider = get_gm_provider()
+        _gm_trade_service = GMTradeService(
+            provider.get_module_reference("gmtrade"),
+            config,
+        )
+    return _gm_trade_service
+
+
+class GMOrderRequest(BaseModel):
+    symbol: str = Field(..., pattern=r"^(SHSE|SZSE)\.\d{6}$")
+    volume: int = Field(..., gt=0)
+    side: int = Field(0, ge=0, le=1, description="0 买入 / 1 卖出")
+    order_type: int = Field(0, ge=0, le=1, description="0 限价 / 1 市价")
+    price: float = Field(0.0, ge=0)
+    position_effect: int = Field(1, ge=1, le=3, description="1 开仓 / 2 平仓 / 3 平今")
+    client_order_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+
+
+class GMCancelRequest(BaseModel):
+    order_id: Optional[str] = Field(None, min_length=1, description="券商委托号或 cl_ord_id")
+    cl_ord_id: Optional[str] = Field(None, min_length=1, description="客户端委托 ID；优先使用")
+
+
+def _trade_error(message: str, code: str) -> Dict[str, Any]:
+    return {"success": False, "error": message, "error_code": code}
 
 
 @router.get("/")
@@ -74,7 +112,7 @@ async def gm_root():
     provider = get_gm_provider()
     return {
         "service": "gm-data-gateway",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "status": "running",
         "available": provider.is_available,
         "token_set": provider._token_set if provider.is_available else False
@@ -109,9 +147,13 @@ async def health_check():
         健康状态
     """
     provider = get_gm_provider()
+    ready = provider.is_available and provider.token_configured
     return {
-        "status": "healthy",
-        "gm_available": provider.is_available
+        "status": "healthy" if ready else "degraded",
+        "gm_available": provider.is_available,
+        "token_configured": provider.token_configured,
+        "account_configured": provider.account_configured,
+        "gmtrade_available": provider.gmtrade_available,
     }
 
 
@@ -254,12 +296,6 @@ async def _execute_gm_rpc_call(
     """
     start_time = datetime.now()
 
-    from config import config
-
-    if module == "gmtrade":
-        if function == "run":
-            kwargs.setdefault("strategy_id", config.GM.strategy_id)
-
     try:
         provider = get_gm_provider()
 
@@ -308,12 +344,10 @@ async def _execute_gm_rpc_call(
         logger.info(f"GM RPC 调用: {module}.{function}")
         logger.debug(f"  args={args}, kwargs={kwargs}")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(func, *args, **kwargs)
-            try:
-                result = future.result(timeout=timeout)
-            except concurrent.futures.TimeoutError:
-                raise TimeoutError(f"函数执行超时 ({timeout}s)")
+        result = await run_module_call(
+            module, func, args, kwargs, timeout=timeout,
+            lane="trade" if module == "gmtrade" else "data",
+        )
 
         serialized_result = serialize_data(result)
 
@@ -348,3 +382,82 @@ async def _execute_gm_rpc_call(
             "function": function,
             "execution_time_ms": (datetime.now() - start_time).total_seconds() * 1000
         }
+
+
+@router.post("/trade/order")
+async def gm_place_order(
+    request: GMOrderRequest,
+    api_key: str = Depends(get_api_key),
+):
+    if request.order_type == 0 and request.price <= 0:
+        return _trade_error("限价单 price 必须大于 0", "INVALID_ARGUMENT")
+
+    service = get_gm_trade_service()
+    try:
+        result = await service.place_order(
+            symbol=request.symbol,
+            volume=request.volume,
+            side=request.side,
+            order_type=request.order_type,
+            price=request.price,
+            position_effect=request.position_effect,
+            client_order_id=request.client_order_id,
+        )
+        return {"success": result.get("success", False), "data": result}
+    except GMConfigError as exc:
+        return _trade_error(str(exc), "GM_CONFIG")
+    except TimeoutError as exc:
+        return _trade_error(f"下单超时: {exc}", "TIMEOUT")
+    except GMTradeError as exc:
+        return _trade_error(str(exc), "GM_TRADE")
+
+
+@router.post("/trade/cancel")
+async def gm_cancel_order(
+    request: GMCancelRequest,
+    api_key: str = Depends(get_api_key),
+):
+    if not request.cl_ord_id and not request.order_id:
+        return _trade_error("撤单需要 order_id 或 cl_ord_id", "INVALID_ARGUMENT")
+    service = get_gm_trade_service()
+    try:
+        result = await service.cancel_order(
+            request.order_id or request.cl_ord_id,
+            cl_ord_id=request.cl_ord_id,
+        )
+        return {"success": result.get("success", False), "data": result}
+    except GMConfigError as exc:
+        return _trade_error(str(exc), "GM_CONFIG")
+    except TimeoutError as exc:
+        return _trade_error(f"撤单超时: {exc}", "TIMEOUT")
+    except GMTradeError as exc:
+        return _trade_error(str(exc), "GM_TRADE")
+
+
+@router.get("/trade/orders")
+async def gm_query_orders(api_key: str = Depends(get_api_key)):
+    service = get_gm_trade_service()
+    try:
+        return {"success": True, "data": await service.query_orders()}
+    except GMTradeError as exc:
+        return _trade_error(str(exc), "GM_TRADE")
+
+
+@router.get("/trade/asset")
+async def gm_query_asset(api_key: str = Depends(get_api_key)):
+    service = get_gm_trade_service()
+    try:
+        return {"success": True, "data": await service.query_asset()}
+    except GMNotLoggedInError as exc:
+        return _trade_error(str(exc), "GM_NOT_LOGGED_IN")
+    except GMTradeError as exc:
+        return _trade_error(str(exc), "GM_TRADE")
+
+
+@router.get("/trade/positions")
+async def gm_query_positions(api_key: str = Depends(get_api_key)):
+    service = get_gm_trade_service()
+    try:
+        return {"success": True, "data": await service.query_positions()}
+    except GMTradeError as exc:
+        return _trade_error(str(exc), "GM_TRADE")

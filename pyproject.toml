@@ -1,15 +1,17 @@
 [project]
 name = "JingNiGateway"
-version = "1.0.0"
-description = "基于 FastAPI 和 WebSocket 的 xtquant 数据网关服务，提供完整的 A 股量化交易接口。"
+version = "2.0.0"
+description = "基于 FastAPI 和 WebSocket 的多源量化数据与交易网关，支持 xtquant、GM 和 tdxquant。"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     {name = "JingNiGateway Team"}
 ]
 keywords = [
     "xtquant",
+    "gmtrade",
+    "tdxquant",
     "fastapi",
     "websocket",
     "quantitative-trading",
@@ -20,7 +22,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -36,6 +37,7 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "python-dotenv>=1.0.0",
+    "six>=1.16.0",
 ]
 
 [project.optional-dependencies]
@@ -63,11 +65,11 @@ packages = ["."]
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312']
+target-version = ['py310', 'py311', 'py312']
 include = '\.pyi?$'
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

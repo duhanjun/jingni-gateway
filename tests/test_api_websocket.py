@@ -21,13 +21,18 @@ from datetime import datetime
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from main import app
+from main import app, XTDATA_AVAILABLE
 from tests.test_config import (
     TEST_API_KEY,
     TEST_CLIENT_ID,
     TEST_STOCK,
     _print_result,
     print_test_header
+)
+
+requires_xtdata = pytest.mark.skipif(
+    not XTDATA_AVAILABLE,
+    reason="需要本机安装 xtquant SDK",
 )
 
 
@@ -82,6 +87,7 @@ class TestWebSocketConnection:
 class TestWebSocketSubscribe:
     """WebSocket 订阅测试"""
     
+    @requires_xtdata
     def test_subscribe_quote(self):
         """测试订阅行情"""
         print_test_header("test_subscribe_quote", "测试订阅行情", "test_api_websocket.py")
@@ -106,6 +112,7 @@ class TestWebSocketSubscribe:
             assert data.get("success", True) is True
         _print_result("订阅行情", True, f"股票：{TEST_STOCK}, 周期：tick", test_file="test_api_websocket.py")
     
+    @requires_xtdata
     def test_subscribe_whole_quote(self):
         """测试订阅全量行情"""
         print_test_header("test_subscribe_whole_quote", "测试订阅全量行情", "test_api_websocket.py")
@@ -134,6 +141,7 @@ class TestWebSocketSubscribe:
 class TestWebSocketRPC:
     """WebSocket RPC 调用测试"""
     
+    @requires_xtdata
     def test_rpc_call_via_websocket(self):
         """测试通过 WebSocket 调用 RPC 接口"""
         print_test_header("test_rpc_call_via_websocket", "测试通过 WebSocket 调用 RPC 接口", "test_api_websocket.py")

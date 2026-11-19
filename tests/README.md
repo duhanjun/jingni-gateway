@@ -22,7 +22,7 @@ tests/
 
 ### 环境要求
 
-- Python 3.8+
+- Python 3.10+
 - pytest >= 7.0
 - requests >= 2.28
 - websockets >= 10.0

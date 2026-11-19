@@ -12,6 +12,8 @@ API 认证依赖模块。
     get_api_key_dependency: 获取 FastAPI 依赖项
 """
 
+import hmac
+
 from fastapi import Depends, HTTPException
 from fastapi.security import APIKeyHeader, APIKeyQuery
 
@@ -40,8 +42,14 @@ async def get_api_key(
     """
     from config import config
 
+    if not config.API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="服务未配置 API Key，请设置 JINGNI_API_KEY 环境变量后重启",
+        )
+
     api_key = header_key or query_key
-    if api_key != config.API_KEY:
+    if not api_key or not hmac.compare_digest(api_key, config.API_KEY):
         raise HTTPException(status_code=401, detail="无效的 API Key")
     return api_key
 

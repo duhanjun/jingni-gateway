@@ -15,9 +15,32 @@ RPC 函数白名单模块。
 只添加可以安全暴露给 RPC 接口的函数。
 """
 
+# 明确禁止通过 RPC 暴露的阻塞函数：
+# - xtdata.run：阻塞线程直到客户端断连，调用一次即占死执行器
+# - xttrader.run_forever：常驻事件循环，网关进程内不可用
+BLOCKED_RPC_FUNCTIONS = {
+    ("xtdata", "run"),
+    ("xttrader", "run_forever"),
+    # 交易写操作只允许走类型化 /trade 端点
+    ("xttrader", "order_stock"),
+    ("xttrader", "cancel_order_stock"),
+    # GM 交易写操作只允许走类型化 /trade 端点
+    ("gmtrade", "order_volume"),
+    ("gmtrade", "order_value"),
+    ("gmtrade", "order_percent"),
+    ("gmtrade", "order_target_volume"),
+    ("gmtrade", "order_target_value"),
+    ("gmtrade", "order_target_percent"),
+    ("gmtrade", "order_batch"),
+    ("gmtrade", "order_cancel"),
+    ("gmtrade", "order_cancel_all"),
+    ("gmtrade", "order_close_all"),
+    ("gmtrade", "run"),
+}
+
 RPC_WHITELIST = {
     "xtdata": [
-        "subscribe_quote", "subscribe_whole_quote", "unsubscribe_quote", "run",
+        "subscribe_quote", "subscribe_whole_quote", "unsubscribe_quote",
         "get_market_data", "get_local_data", "get_full_tick", "get_divid_factors",
         "get_l2_quote", "get_l2_order", "get_l2_transaction", "get_full_kline",
         "download_history_data", "download_history_data2",
@@ -39,17 +62,9 @@ RPC_WHITELIST = {
     ],
     "xttrader": [
         "create_trader", "register_callback", "start", "connect", "stop",
-        "run_forever", "set_relaxed_response_order_enabled",
+        "set_relaxed_response_order_enabled",
         "subscribe", "unsubscribe",
-        "order_stock", "order_stock_async",
-        "cancel_order_stock", "cancel_order_stock_sysid",
-        "cancel_order_stock_async", "cancel_order_stock_sysid_async",
-        "fund_transfer",
-        "bank_transfer_in", "bank_transfer_in_async",
-        "bank_transfer_out", "bank_transfer_out_async",
-        "ctp_transfer_option_to_future", "ctp_transfer_option_to_future_async",
-        "ctp_transfer_future_to_option", "ctp_transfer_future_to_option_async",
-        "sync_transaction_from_external",
+        # 下单/撤单/资金划转只允许走类型化端点，不进入通用 RPC
         "query_stock_asset", "query_stock_orders", "query_stock_trades",
         "query_stock_positions", "query_position_statistics",
         "query_credit_detail", "query_stk_compacts",
@@ -111,16 +126,12 @@ RPC_WHITELIST = {
         "ipo_get_match_number", "ipo_get_quota",
     ],
     "gmtrade": [
-        "run", "stop", "set_token", "set_account_id", "set_serv_addr",
+        "stop", "set_token", "set_account_id", "set_serv_addr",
         "set_option", "set_parameter", "add_parameter",
         "subscribe", "unsubscribe",
-        "order_volume", "order_value", "order_percent",
-        "order_target_volume", "order_target_value", "order_target_percent",
-        "order_batch", "order_cancel", "order_cancel_all", "order_close_all",
+        # 下单/撤单/算法单/资金相关只允许走类型化端点，不进入通用 RPC
         "get_cash", "get_position", "get_orders",
         "get_unfinished_orders", "get_execution_reports",
-        "algo_order", "algo_order_batch", "algo_order_cancel",
-        "algo_order_pause", "algo_smart_reorder", "algo_smart_reorder_cancel",
         "get_algo_orders", "get_algo_child_orders",
         "credit_buying_on_margin", "credit_short_selling",
         "credit_repay_cash_directly", "credit_repay_cash_by_selling_share",
@@ -145,6 +156,17 @@ RPC_WHITELIST = {
         "universe_set", "universe_get_symbols",
         "universe_get_names", "universe_delete",
     ],
+    "tdxdata": [
+        "get_market_data", "get_market_snapshot", "get_sector_list",
+        "get_stock_list_in_sector", "get_trading_dates", "get_divid_factors",
+        "get_stock_info", "get_more_info", "get_kzz_info", "get_financial_data",
+        "get_stock_list", "refresh_cache",
+    ],
+    # 交易查询可走通用 RPC；下单/撤单只允许走类型化 /trade 端点
+    "tdxtrade": [
+        "stock_account", "query_stock_asset", "query_stock_orders",
+        "query_stock_positions",
+    ],
 }
 
 
@@ -166,6 +188,8 @@ def is_function_whitelisted(module: str, function: str) -> bool:
         False
     """
     if module not in RPC_WHITELIST:
+        return False
+    if (module, function) in BLOCKED_RPC_FUNCTIONS:
         return False
     return function in RPC_WHITELIST[module]
 

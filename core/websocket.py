@@ -17,6 +17,7 @@ WebSocket 连接管理模块。
 """
 
 import asyncio
+import hmac
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -47,7 +48,7 @@ class ConnectionManager:
         >>> await manager.send_to_client("client1", {"type": "data", "value": 123})
     """
 
-    def __init__(self):
+    def __init__(self, max_connections: int = 100, heartbeat_interval: int = 30):
         """初始化连接管理器。"""
         self._active_connections: Dict[str, WebSocket] = {}
         self._message_queues: Dict[str, asyncio.Queue] = {}
@@ -55,6 +56,8 @@ class ConnectionManager:
         self._last_heartbeat: Dict[str, datetime] = {}
         self._client_metadata: Dict[str, dict] = {}
         self._reconnect_tokens: Dict[str, str] = {}
+        self._max_connections = max(1, int(max_connections))
+        self._heartbeat_interval = max(1.0, float(heartbeat_interval))
 
     async def connect(
         self,
@@ -78,8 +81,24 @@ class ConnectionManager:
             连接成功返回 True，否则返回 False
         """
         try:
-            if api_key != expected_api_key:
+            if not expected_api_key or not api_key or not hmac.compare_digest(
+                api_key, expected_api_key
+            ):
                 await websocket.close(code=4001, reason="Invalid API Key")
+                return False
+
+            # 同一 client_id 重连时，先关闭旧连接，避免旧连接泄漏
+            existing = self._active_connections.get(client_id)
+            if existing is not None:
+                try:
+                    await existing.close(code=4002, reason="Replaced by new connection")
+                except Exception:
+                    pass
+                self.disconnect(client_id)
+
+            if len(self._active_connections) >= self._max_connections:
+                await websocket.close(code=4003, reason="Max connections reached")
+                logger.warning("拒绝 WebSocket 连接：已达上限 %s", self._max_connections)
                 return False
 
             await websocket.accept()
@@ -137,7 +156,16 @@ class ConnectionManager:
         if client_id in self._client_metadata:
             del self._client_metadata[client_id]
 
+        self._reconnect_tokens.pop(client_id, None)
+
         logger.info(f"客户端 {client_id} 已断开连接")
+
+    def touch(self, client_id: str) -> None:
+        """记录客户端最近一次活动时间。"""
+        if client_id in self._active_connections:
+            self._last_heartbeat[client_id] = datetime.now()
+            if client_id in self._client_metadata:
+                self._client_metadata[client_id]["message_count"] += 1
 
     async def send_to_client(self, client_id: str, message: dict) -> bool:
         """
@@ -283,12 +311,29 @@ class ConnectionManager:
                 try:
                     message = await asyncio.wait_for(
                         self._message_queues[client_id].get(),
-                        timeout=60.0
+                        timeout=self._heartbeat_interval
                     )
                     await self.send_to_client(client_id, message)
                 except asyncio.TimeoutError:
+                    last = self._last_heartbeat.get(client_id)
+                    if last is not None:
+                        stale = (datetime.now() - last).total_seconds()
+                        if stale > self._heartbeat_interval * 2:
+                            logger.warning(
+                                "客户端 %s 心跳超时（%.1fs），关闭连接",
+                                client_id, stale,
+                            )
+                            try:
+                                await self._active_connections[client_id].close(
+                                    code=4008, reason="Heartbeat timeout"
+                                )
+                            except Exception:
+                                pass
+                            self.disconnect(client_id)
+                            break
+
                     await self.send_to_client(client_id, {
-                        "type": "heartbeat",
+                        "type": "ping",
                         "timestamp": datetime.now().isoformat()
                     })
                 except Exception as e:
@@ -308,6 +353,8 @@ class ConnectionManager:
         """
         return {
             "total_connections": len(self._active_connections),
+            "max_connections": self._max_connections,
+            "heartbeat_interval": self._heartbeat_interval,
             "clients": {
                 client_id: {
                     "connected_at": meta["connected_at"].isoformat(),

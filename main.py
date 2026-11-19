@@ -21,11 +21,13 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
 
 from config import config
-from api import gm_router, xtquant_router, get_api_key
+from api import gm_router, xtquant_router, tdx_router, get_api_key
 from api.xtquant import get_xtquant_provider, set_xtquant_provider
 from api.gm import get_gm_provider, set_gm_provider
+from api.tdxquant import get_tdx_provider, set_tdx_provider
 from core.websocket import ConnectionManager, WebSocketCallbackHandler
 from core.rpc import execute_rpc_call, initialize_modules, create_xttrader_instance, get_xttrader_instance, _xttrader_instance as rpc_xttrader_instance
+from core.executor import shutdown_executors
 from core.whitelist import RPC_WHITELIST
 
 logging.basicConfig(
@@ -52,10 +54,14 @@ try:
 except ImportError:
     logger.warning("xttrader 模块不可用")
 
-ws_manager = ConnectionManager()
+ws_manager = ConnectionManager(
+    max_connections=config.MAX_CONNECTIONS,
+    heartbeat_interval=config.WS_HEARTBEAT_INTERVAL,
+)
 ws_callback_handler = WebSocketCallbackHandler(ws_manager)
 
 gm_provider = None
+tdx_provider = None
 
 
 def _print_init_section(title: str):
@@ -99,12 +105,45 @@ def _init_gm():
         _print_init_status("GM", "gm.api", gm_status)
 
         if gm_provider.is_available:
-            _print_init_status("GM", "Token", "OK")
-            _print_init_status("GM", "账户 ID", "OK", config.GM.account_id if hasattr(config, 'GM') and hasattr(config.GM, 'account_id') else "N/A")
+            _print_init_status(
+                "GM", "Token",
+                "OK" if gm_provider.token_configured else "WARN",
+                "已配置" if gm_provider.token_configured else "未配置 JINGNI_GM_TOKEN",
+            )
+            _print_init_status(
+                "GM", "账户 ID",
+                "OK" if gm_provider.account_configured else "WARN",
+                "已配置" if gm_provider.account_configured else "未配置 JINGNI_GM_ACCOUNT_ID",
+            )
             mode = config.GM.mode if hasattr(config, 'GM') and hasattr(config.GM, 'mode') else "N/A"
             _print_init_status("GM", "运行模式", "OK", mode)
     else:
         _print_init_status("GM", "gm.api", "FAIL")
+
+
+def _init_tdx():
+    """初始化 TdxQuant (通达信) 模块。"""
+    global tdx_provider
+
+    _print_init_section("TdxQuant (通达信) 初始化")
+
+    tdx_provider = get_tdx_provider()
+    set_tdx_provider(tdx_provider)
+
+    if not tdx_provider.is_enabled:
+        _print_init_status("TdxQuant", "tqcenter", "OFF", "未启用")
+        return
+
+    _print_init_status(
+        "TdxQuant", "tqcenter",
+        "OK" if tdx_provider.is_available else "FAIL",
+        tdx_provider.get_version() if tdx_provider.is_available else "",
+    )
+    _print_init_status(
+        "TdxQuant", "account",
+        "OK" if tdx_provider.account_configured else "WARN",
+        "已配置" if tdx_provider.account_configured else "未配置 JINGNI_TDX_ACCOUNT",
+    )
 
 
 def _print_startup_summary():
@@ -117,7 +156,8 @@ def _print_startup_summary():
 
     logger.info("  数据源状态:")
     logger.info(f"    ├── xtquant:    xtdata={'ON' if XTDATA_AVAILABLE else 'OFF'}, xttrader={'ON' if XTTRADER_AVAILABLE else 'OFF'}")
-    logger.info(f"    └── gm:         {'ON' if gm_provider and gm_provider.is_available else 'OFF'}")
+    logger.info(f"    ├── gm:         {'ON' if gm_provider and gm_provider.is_available else 'OFF'}")
+    logger.info(f"    └── tdxquant:   {'ON' if tdx_provider and tdx_provider.is_available else 'OFF'}")
 
     gm_mode = config.GM.mode if hasattr(config, 'GM') and hasattr(config.GM, 'mode') else "N/A"
     if gm_provider and gm_provider.is_available:
@@ -148,6 +188,8 @@ async def lifespan(app: FastAPI):
 
     _init_gm()
 
+    _init_tdx()
+
     gm_provider = get_gm_provider()
     set_gm_provider(gm_provider)
 
@@ -157,6 +199,11 @@ async def lifespan(app: FastAPI):
 
     logger.info("正在关闭服务...")
     _cleanup_xttrader()
+    if tdx_provider:
+        tdx_provider.cleanup()
+    if gm_provider:
+        gm_provider.cleanup()
+    shutdown_executors(wait=False)
 
 
 app = FastAPI(
@@ -168,6 +215,7 @@ app = FastAPI(
 
 app.include_router(gm_router)
 app.include_router(xtquant_router)
+app.include_router(tdx_router)
 
 
 def _init_xttrader():
@@ -251,6 +299,12 @@ async def root():
             "gm": {
                 "available": gm_provider.is_available if gm_provider else False,
                 "token_set": gm_provider._token_set if gm_provider and gm_provider.is_available else False
+            },
+            "tdxquant": {
+                "enabled": tdx_provider.is_enabled if tdx_provider else False,
+                "available": tdx_provider.is_available if tdx_provider else False,
+                "initialized": tdx_provider.is_initialized if tdx_provider else False,
+                "account_configured": tdx_provider.account_configured if tdx_provider else False
             }
         },
         "websocket_support": True,
@@ -261,11 +315,25 @@ async def root():
 @app.get("/health")
 async def health_check():
     """健康检查端点。"""
+    gm_available = gm_provider.is_available if gm_provider else False
+    tdx_available = tdx_provider.is_available if tdx_provider else False
+    provider_flags = {
+        "xtdata": XTDATA_AVAILABLE,
+        "xttrader": XTTRADER_AVAILABLE,
+        "gm": gm_available,
+        "tdxquant": tdx_available,
+    }
+    available_count = sum(1 for value in provider_flags.values() if value)
+
     return {
-        "status": "healthy",
+        "status": "healthy" if available_count else "degraded",
+        "providers": provider_flags,
+        "available_providers": available_count,
         "xtdata_available": XTDATA_AVAILABLE,
         "xttrader_available": XTTRADER_AVAILABLE,
-        "gm_available": gm_provider.is_available if gm_provider else False,
+        "gm_available": gm_available,
+        "tdx_available": tdx_available,
+        "tdx_initialized": tdx_provider.is_initialized if tdx_provider else False,
         "connections": ws_manager.get_stats()
     }
 
@@ -308,6 +376,7 @@ async def websocket_endpoint(
 
         while True:
             data = await websocket.receive_text()
+            ws_manager.touch(client_id)
             message = json.loads(data)
             await _handle_ws_message(client_id, message)
 
@@ -332,10 +401,13 @@ async def _handle_ws_message(client_id: str, message: dict):
     elif msg_type == "rpc_call":
         await _handle_rpc_call(client_id, message)
     elif msg_type == "ping":
+        ws_manager.touch(client_id)
         await ws_manager.send_to_client(client_id, {
             "type": "pong",
             "timestamp": datetime.now().isoformat()
         })
+    elif msg_type == "pong":
+        ws_manager.touch(client_id)
     elif msg_type == "reconnect":
         await _handle_reconnect(client_id, message)
     else:

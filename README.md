@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # JingNiGateway
 
 <p align="center">
@@ -17,7 +16,7 @@
 
 ## ✨ 特性
 
-- 🚀 **双源数据支持**：同时支持 **xtquant (迅投QMT)** 和 **gm (掘金量化)** 两大主流量化平台
+- 🚀 **三源支持**：同时支持 **xtquant (迅投QMT)**、**GM (掘金量化)** 和 **tdxquant (通达信量化)**
 - 📡 **WebSocket 实时推送**：订阅式行情推送和交易事件回调
 - 🔒 **安全认证**：API Key 验证机制，支持 Header 和 Query 参数
 - 🔄 **数据序列化**：自动处理 DataFrame、NaN、Inf 等复杂数据类型
@@ -116,7 +115,7 @@ jingni_gateway/
 
 | 组件 | 版本要求 | 说明 |
 |------|---------|------|
-| Python | 3.8 - 3.12 | 推荐使用 Python 3.10+ |
+| Python | 3.10 - 3.12 | 推荐使用 Python 3.10+ |
 | 迅投 QMT | 最新版 | 如需使用 xtquant 接口 |
 | 掘金量化 | 最新版 | 如需使用 gm 接口 |
 
@@ -149,9 +148,38 @@ copy "D:\gjzq\qmt\bin.x64\Lib\site-packages\xtquant" ".venv\Lib\site-packages\"
 
 #### gm (掘金量化)
 
-```bash
-pip install gm
+安装到网关实际使用的项目虚拟环境（不要装到 uv 的 base Python）：
+
+```powershell
+cd D:\codebuddy\jingni-gateway
+uv pip install --python .\.venv\Scripts\python.exe -U gm `
+  -i https://mirrors.aliyun.com/pypi/simple/
+# gm 3.0.193 的运行时还缺 six，需要补装
+uv pip install --python .\.venv\Scripts\python.exe six
 ```
+
+注意：GM SDK 在 Python 3.11 下要求 `pandas<2.0`，安装时会把项目的 pandas 降到 1.5.3。
+
+#### gmtrade (GM 外部交易 sidecar)
+
+`gmtrade` 是独立程序化交易 SDK，不依赖 `gm.api` 的 `run()` 策略上下文；网关的 GM 下单/撤单/资金/持仓/委托已切到它。`gmtrade 3.0.6` 只有 `cp36`–`cp310` wheel，**不能装进 Python 3.11 的 `.venv`**，因此项目单独建 Python 3.10 sidecar：
+
+```powershell
+cd D:\codebuddy\jingni-gateway
+uv venv --python 3.10 .venv310
+uv pip install --python .\.venv310\Scripts\python.exe gmtrade==3.0.6
+```
+
+网关启动时自动探测 `.venv310\Scripts\python.exe`；也可用环境变量覆盖：
+
+```dotenv
+JINGNI_GMTRADE_PYTHON=D:\codebuddy\jingni-gateway\.venv310\Scripts\python.exe
+JINGNI_GMTRADE_ENDPOINT=api.myquant.cn:9000
+```
+
+- `gmdata` 行情仍走 `gm.api`；`gmtrade` 只负责交易与交易查询。
+- `get_cash/get_position/get_orders/order_volume/order_cancel` 经 `tools/gmtrade_bridge.py` 的 JSON Lines 协议调用，sidecar 只登录一个账户。
+- 当前验证：模拟账户 `nav=100000.00`，9.66 限价买入 `accepted`，撤单后 `status=5`，资金不变、无持仓；`/api/v1/gm/health` 会返回 `gmtrade_available`。
 
 ---
 
@@ -389,14 +417,16 @@ pytest tests/ --cov=. --cov-report=html
 
 #### xttrader 交易接口
 
-| 函数 | 说明 |
+交易写操作只允许走类型化端点；通用 RPC 仅保留查询。
+
+| 端点 / 函数 | 说明 |
 |------|------|
-| `create_trader` | 创建交易实例 |
-| `order_stock` | 股票下单 |
-| `cancel_order_stock` | 撤单 |
-| `query_stock_asset` | 查询资金 |
-| `query_stock_positions` | 查询持仓 |
-| `query_stock_orders` | 查询订单 |
+| `POST /api/v1/xtquant/trade/order` | 类型化下单（`client_order_id` 幂等） |
+| `POST /api/v1/xtquant/trade/cancel` | 类型化撤单 |
+| `GET /api/v1/xtquant/trade/orders` | 查询委托 |
+| `GET /api/v1/xtquant/trade/asset` | 查询资金 |
+| `GET /api/v1/xtquant/trade/positions` | 查询持仓 |
+| `query_stock_asset` / `query_stock_orders` / `query_stock_positions` | 通用 RPC 只读查询 |
 
 ### gm (掘金量化)
 
@@ -413,14 +443,39 @@ pytest tests/ --cov=. --cov-report=html
 
 #### gmtrade 交易接口
 
-| 函数 | 说明 |
+| 端点 / 函数 | 说明 |
 |------|------|
-| `order_volume` | 按量下单 |
-| `order_value` | 按价值下单 |
-| `order_cancel` | 撤单 |
-| `get_cash` | 获取资金 |
-| `get_position` | 获取持仓 |
-| `get_orders` | 获取订单 |
+| `POST /api/v1/gm/trade/order` | 类型化按量下单（`client_order_id` 幂等） |
+| `POST /api/v1/gm/trade/cancel` | 类型化撤单 |
+| `GET /api/v1/gm/trade/orders` | 查询订单 |
+| `GET /api/v1/gm/trade/asset` | 查询资金 |
+| `GET /api/v1/gm/trade/positions` | 查询持仓 |
+
+GM SDK `3.0.193` 注意：不要调用 `gm.api.set_account_id()`，该全局设置会让后续 `get_cash/get_position` 返回 `1013`。网关现在只 `set_token`，查询时显式传 `account_id`。
+
+GM 交易链路：`/api/v1/gm/trade/*` → `GMTradeService` → `GMTradeProxy` → `.venv310` 的 `tools/gmtrade_bridge.py` → `gmtrade.order_volume/order_cancel`。`/trade/cancel` 接受 `order_id` 或 `cl_ord_id`，传 `order_id` 时网关先按委托列表解析 `cl_ord_id`。
+
+| `get_cash` / `get_position` / `get_orders` | 通用 RPC 只读查询 |
+
+### tdxquant (通达信量化)
+
+| 端点 | 说明 |
+|------|------|
+| `GET /api/v1/tdxquant/health` | 健康检查（含 `logged_in`） |
+| `POST /api/v1/tdxquant/rpc/execute` | 数据 RPC（仅 `tdxdata`） |
+| `POST /api/v1/tdxquant/trade/order` | 类型化下单（`client_order_id` 幂等） |
+| `POST /api/v1/tdxquant/trade/cancel` | 撤单并做状态对账 |
+| `GET /api/v1/tdxquant/trade/orders` | 查询委托 |
+| `GET /api/v1/tdxquant/trade/asset` | 查询资金（以 `Cash` 为准） |
+| `GET /api/v1/tdxquant/trade/positions` | 查询持仓 |
+
+幂等说明：`client_order_id` 先查进程内缓存，再查 `JINGNI_TDX_IDEMPOTENCY_DB`（默认 `data/tdx_idempotency.sqlite3`）；accepted 与 pending_confirm 都会落盘，网关重启后同 key 返回 `idempotent_replay=true`。`notify=1` 返回 `pending_confirm`，需在通达信客户端手动确认。
+
+数据参数补充：
+
+- `get_stock_list` 的 `market` 是通达信分类编码，不是 `SH/SZ/BJ`。常用值：`5` 全部 A 股、`7` 上证主板、`8` 深证主板、`50` 沪深 A 股、`53` 北交所、`32` 可转债。实测 `market=5` 返回 5584 只、`7` 返回 1700 只、`8` 返回 1494 只、`53` 返回 358 只。
+- `get_market_data` 在 tqcenter 本地模式下，分钟线要求客户端已下载对应盘后数据；有 Level2 权限才能取分钟线。当前终端 `1m/5m/15m/30m/1h` 返回空字典，`60m` 返回 `error/msg` 结构，属于终端数据权限/下载问题，不是网关丢数据。
+- `get_kzz_info` 只接受可转债代码，例如 `123039.SZ`；传正股代码或终端没有可转债数据包时返回空字典。
 
 ---
 
@@ -428,7 +483,7 @@ pytest tests/ --cov=. --cov-report=html
 
 ### 代码规范
 
-- 使用 Python 3.8+ 特性
+- 使用 Python 3.10+ 特性
 - 遵循 PEP 8 编码规范
 - 类名使用 PascalCase
 - 函数和变量使用 snake_case
@@ -457,6 +512,3 @@ MIT License
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
-=======
-# jingni-gateway
->>>>>>> ade59ef18e65f9c8b222be5d8dc9a8a10041b5b6

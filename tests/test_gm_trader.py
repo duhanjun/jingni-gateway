@@ -12,6 +12,8 @@ JingNiGateway GM (掘金量化) 交易接口测试
 
 import pytest
 from fastapi.testclient import TestClient
+
+pytest.importorskip("gm", reason="需要本机安装掘金 GM SDK")
 import sys
 import os
 from datetime import datetime

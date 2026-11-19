@@ -12,6 +12,8 @@ JingNiGateway XtData 行情模块接口测试
 
 import pytest
 from fastapi.testclient import TestClient
+
+pytest.importorskip("xtquant", reason="需要本机安装 QMT/xtquant SDK")
 import sys
 import os
 from datetime import datetime

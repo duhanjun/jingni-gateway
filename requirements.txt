@@ -17,31 +17,23 @@ numpy==1.26.3
 # 环境配置
 python-dotenv==1.0.0
 
-# HTTP 客户端（可选）
+# GM SDK 运行时依赖（gm 3.0.193 的元数据未声明 six）
+six==1.17.0
+
+# HTTP 客户端
 requests==2.31.0
 httpx==0.26.0
 
-# 测试框架（可选）
+# 测试与代码质量（开发依赖）
 pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0
-
-# ========================================
-# 开发依赖（可选）
-# ========================================
-
-# 测试
-pytest==7.4.4
-pytest-asyncio==0.23.3
-pytest-cov==4.1.0
-
-# 代码质量
 black==23.12.1
 flake8==7.0.0
 mypy==1.8.0
 
 # ========================================
-# 注意：xtquant 是专有库
-# 需要从 QMT 安装目录手动复制
+# 注意：
+# - xtquant 是专有库，需要从 QMT 安装目录手动复制
+# - gmtrade 只有 cp36-cp310 wheel，装在独立 .venv310（见 tools/requirements-gmtrade310.txt）
 # ========================================
-# xtquant (from QMT installation)

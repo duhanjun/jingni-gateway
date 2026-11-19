@@ -1,0 +1,4 @@
+# gmtrade 外部交易 sidecar 依赖（Python 3.10）
+# 安装命令：
+#   uv pip install --python .\.venv310\Scripts\python.exe -r tools\requirements-gmtrade310.txt
+gmtrade==3.0.6

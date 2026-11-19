@@ -51,7 +51,8 @@ class TestHealthCheck:
         response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "healthy"
+        assert data["status"] in ("healthy", "degraded")
+        assert data["status"] == ("healthy" if data["available_providers"] else "degraded")
         assert "xtdata_available" in data
         assert "xttrader_available" in data
         _print_result("健康检查", True, f"状态：{data['status']}", test_file="test_api_health.py")

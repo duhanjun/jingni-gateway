@@ -10,7 +10,9 @@ GM (掘金量化) 数据源提供者模块。
 from .base import BaseProvider, serialize_data, SymbolConverter
 from typing import Dict, Any, List
 import logging
+import os
 
+from core.gmtrade_proxy import GMTradeProxy
 from core.whitelist import RPC_WHITELIST
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ class GMProvider(BaseProvider):
         self._api = None
         self._available = False
         self._token_set = False
+        self._gmtrade: GMTradeProxy | None = None
         self._rpc_whitelist = {
             "gmdata": RPC_WHITELIST.get("gmdata", []),
             "gmtrade": RPC_WHITELIST.get("gmtrade", [])
@@ -52,6 +55,23 @@ class GMProvider(BaseProvider):
     def is_available(self) -> bool:
         """检查 GM 模块是否可用。"""
         return self._available
+
+    @property
+    def token_configured(self) -> bool:
+        """是否配置了 GM Token。"""
+        gm_cfg = getattr(self._config, "GM", None)
+        return bool(gm_cfg and getattr(gm_cfg, "token", ""))
+
+    @property
+    def account_configured(self) -> bool:
+        """是否配置了 GM 资金账户。"""
+        gm_cfg = getattr(self._config, "GM", None)
+        return bool(gm_cfg and getattr(gm_cfg, "account_id", ""))
+
+    @property
+    def gmtrade_available(self) -> bool:
+        """gmtrade 外部交易 sidecar 是否可用。"""
+        return bool(self._gmtrade and self._gmtrade.available)
 
     def initialize(self) -> bool:
         """
@@ -76,9 +96,29 @@ class GMProvider(BaseProvider):
                 else:
                     logger.warning("GM Token 未配置，部分功能可能不可用")
 
+                # 注意：不要调用 api.set_account_id()。gm 3.0.193 中该全局设置会让
+                # 后续 get_cash/get_position 返回 1013；类型化交易查询已显式传 account_id。
                 if self._config.GM.account_id:
-                    self._api.set_account_id(self._config.GM.account_id)
-                    logger.info(f"GM 账户 ID 已设置: {self._config.GM.account_id}")
+                    logger.info("GM 账户 ID 已配置，查询时显式传入")
+
+                # gmtrade 3.0.6 只有 cp36-cp310 wheel；用项目 .venv310 作为 sidecar。
+                bridge = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "tools",
+                    "gmtrade_bridge.py",
+                )
+                gmtrade_python = getattr(self._config.GM, "gmtrade_python", "")
+                if gmtrade_python and os.path.exists(gmtrade_python) and os.path.exists(bridge):
+                    self._gmtrade = GMTradeProxy(
+                        python_path=gmtrade_python,
+                        bridge_script=bridge,
+                        token=self._config.GM.token,
+                        account_id=self._config.GM.account_id,
+                        endpoint=getattr(self._config.GM, "gmtrade_endpoint", "api.myquant.cn:9000"),
+                    )
+                    logger.info("gmtrade sidecar 已配置")
+                else:
+                    logger.warning("gmtrade sidecar 不可用，GM 下单将回退到 gm.api")
 
                 mode = getattr(self._config.GM, 'mode', None)
                 if mode:
@@ -95,7 +135,9 @@ class GMProvider(BaseProvider):
 
     def cleanup(self):
         """清理资源。"""
-        pass
+        if self._gmtrade is not None:
+            self._gmtrade.close()
+            self._gmtrade = None
 
     def get_rpc_whitelist(self) -> Dict[str, List[str]]:
         """获取 RPC 函数白名单。"""
@@ -114,6 +156,8 @@ class GMProvider(BaseProvider):
         if not self._available:
             return None
 
+        if module_name == "gmtrade" and self._gmtrade is not None:
+            return self._gmtrade
         if module_name in ("gmdata", "gmtrade"):
             return self._api
         else:
