@@ -1,514 +1,479 @@
 # JingNiGateway
 
-<p align="center">
-  <b>基于 FastAPI 和 WebSocket 的多源量化数据网关服务</b>
-</p>
+基于 FastAPI + WebSocket 的多源量化数据与交易网关，统一接入：
 
-<p align="center">
-  <a href="#特性">特性</a> •
-  <a href="#项目结构">项目结构</a> •
-  <a href="#快速开始">快速开始</a> •
-  <a href="#api文档">API文档</a> •
-  <a href="#测试">测试</a>
-</p>
+- **xtquant / MiniQMT**：行情与类型化交易
+- **GM / 掘金量化**：`gm.api` 行情 + `gmtrade` 外部交易 sidecar
+- **tdxquant / 通达信量化**：`tqcenter` 直连行情与类型化交易
+
+当前版本：`2.0.0`
 
 ---
 
-## ✨ 特性
+## 最新功能
 
-- 🚀 **三源支持**：同时支持 **xtquant (迅投QMT)**、**GM (掘金量化)** 和 **tdxquant (通达信量化)**
-- 📡 **WebSocket 实时推送**：订阅式行情推送和交易事件回调
-- 🔒 **安全认证**：API Key 验证机制，支持 Header 和 Query 参数
-- 🔄 **数据序列化**：自动处理 DataFrame、NaN、Inf 等复杂数据类型
-- 🔌 **连接管理**：支持自动重连、心跳检测、连接状态追踪
-- 📚 **完整文档**：自动生成 API 文档，支持方法列表查询
-- 🎯 **零配置**：开箱即用，默认配置满足开发需求
-- 🛡️ **函数白名单**：仅允许调用白名单内的函数，保障安全
-- 🧪 **全面测试**：覆盖所有核心功能的测试用例
+### 统一接入层
+
+- 三个 Provider：`xtquant`、`gm`、`tdxquant`
+- HTTP 类型化交易端点 + 通用数据 RPC
+- 通用 RPC **不再暴露下单/撤单**，交易写操作只走 `/trade/*`
+- API Key 认证，支持 `X-API-Key` Header 和 `api_key` Query 参数
+- 默认监听 `127.0.0.1`，避免无意暴露到局域网
+
+### 执行与稳定性
+
+- `data` / `trade` / `bulk` 三条执行 lane，避免长任务饿死交易
+- 全局共享执行器 + 真异步超时；超时后明确返回，不再阻塞事件循环
+- RPC 参数严格校验：未知参数、缺必填参数直接返回 `INVALID_ARGUMENT`
+- 阻塞函数黑名单：`xtdata.run`、`xttrader.run_forever`、`gmtrade.run` 等不再进入 RPC
+- DataFrame / NumPy / NaN / Inf / datetime 统一序列化
+
+### 交易能力
+
+| Provider | 下单 | 撤单 | 资金/持仓/委托 | 说明 |
+|---|---|---|---|---|
+| xtquant | `POST /api/v1/xtquant/trade/order` | `/trade/cancel` | `/trade/asset`、`/trade/positions`、`/trade/orders` | 代码已接入；本机未安装 xtquant SDK，尚未真实联调 |
+| GM | `POST /api/v1/gm/trade/order` | `/trade/cancel` | 同上 | `gmtrade` sidecar；模拟账户已验证下单→撤单闭环 |
+| tdxquant | `POST /api/v1/tdxquant/trade/order` | `/trade/cancel` | 同上 | `tqcenter` 直连；模拟账户已验证登录、资金/持仓/委托查询；真实 `accepted` 委托待交易时段复验 |
+
+### 幂等与交易状态
+
+- xtquant / GM：`client_order_id` 进程内幂等缓存
+- TDX：`client_order_id` 进程内缓存 + SQLite 持久化，网关重启后同 key 返回 `idempotent_replay=true`
+- TDX `notify=1` 如实返回 `pending_confirm`，不会伪装成已成交；需要在通达信客户端人工确认
+- TDX 撤单做状态对账，处理“返回 `Value=0` 但异步生效”的情况
+
+### WebSocket
+
+- 行情订阅、全量行情订阅、取消订阅
+- `ping/pong` 心跳、心跳超时关闭
+- 最大连接数限制、同 `client_id` 重连替换
+- 交易事件推送接口已预留；当前 GM 交易以轮询查询为主
+
+### GM 外部交易 sidecar
+
+`gmtrade 3.0.6` 只有 `cp36`–`cp310` wheel，不能装进 Python 3.11 的 `.venv`。因此项目使用独立的 Python 3.10 sidecar：
+
+```text
+网关(Python 3.11)
+  → GMTradeProxy
+    → tools/gmtrade_bridge.py (Python 3.10)
+      → gmtrade.order_volume / order_cancel / get_cash / get_positions / get_orders
+```
+
+- `gm.api` 继续负责行情/数据
+- `gmtrade` 负责 GM 交易与交易查询
+- sidecar 通过 JSON Lines 通信，网关退出时自动关闭
+- 当前 sidecar 只登录一个 GM 账户
 
 ---
 
-## 📁 项目结构
+## 当前验证状态
 
-```
-jingni_gateway/
-├── main.py                 # 应用入口
-├── config.py               # 配置管理
-├── core/                   # 核心模块
-│   ├── __init__.py
-│   ├── whitelist.py        # RPC 函数白名单
-│   ├── rpc.py              # RPC 执行引擎
-│   └── websocket.py        # WebSocket 连接管理
-├── api/                    # API 路由
-│   ├── __init__.py
-│   ├── deps.py             # 公共依赖
-│   ├── gm.py               # GM 接口路由
-│   └── xtquant.py          # XtQuant 接口路由
-├── providers/              # 数据源提供者
-│   ├── __init__.py
-│   ├── base.py             # 基类和工具函数
-│   ├── gm_provider.py      # GM 提供者
-│   └── xtquant_provider.py # XtQuant 提供者
-├── models/                 # 数据模型
-│   ├── __init__.py
-│   └── common.py           # 公共模型
-├── tests/                  # 测试文件
-│   ├── __init__.py
-│   ├── test_config.py      # 测试配置
-│   ├── test_api_health.py  # API 健康检查测试
-│   ├── test_api_websocket.py # WebSocket 测试
-│   ├── test_xtquant_data.py # XtQuant 数据接口测试
-│   ├── test_xtquant_trader.py # XtQuant 交易接口测试
-│   ├── test_gm_data.py     # GM 数据接口测试
-│   └── test_gm_trader.py   # GM 交易接口测试
-└── README.md               # 项目文档
+| 能力 | 状态 |
+|---|---|
+| xtquant 数据/交易代码 | 已完成接入；本机没有 xtquant SDK，未真实联调 |
+| GM `gm.api` 行情 | 真实接口可用 |
+| GM `gmtrade` 模拟账户 | 登录、资金、持仓、委托、下单、撤单已验证 |
+| GM 实盘 | 未切换、未下实盘单 |
+| TDX tqcenter 登录与资产 | 模拟账户 `logged_in=true`，资产可查 |
+| TDX 模拟交易 | 登录、资金/持仓/委托查询、`notify` 三态已验证；真实 `accepted` 委托与撤单需交易时段 |
+| TDX 实盘 | 券商已开放 TQ 自动下单权限，尚未做实盘小额验证 |
+| TDX 分钟数据 | 当前终端无分钟数据/Level2，`1m/5m/15m/30m/1h` 为空 |
+| 自动化测试 | `84 passed, 5 skipped` |
+
+> TDX 收盘后提交委托会返回 `(-7353) 服务未就绪(OMS)`，这是终端 OMS 时段限制，不是网关异常。真实 `accepted → 撤单` 闭环需在交易时段复验。
+
+---
+
+## 项目结构
+
+```text
+jingni-gateway/
+├── main.py                     # FastAPI 入口、生命周期、WebSocket
+├── config.py                   # 环境变量驱动的配置
+├── .env.example                # 环境变量模板
+├── requirements.txt            # 主环境依赖
+├── api/
+│   ├── deps.py                 # API Key 依赖
+│   ├── xtquant.py              # /api/v1/xtquant/*
+│   ├── gm.py                   # /api/v1/gm/*
+│   └── tdxquant.py             # /api/v1/tdxquant/*
+├── core/
+│   ├── executor.py             # data/trade/bulk 执行器
+│   ├── rpc.py                  # 通用 RPC、参数校验
+│   ├── whitelist.py            # 函数白名单
+│   ├── websocket.py            # WebSocket 连接/订阅/心跳
+│   ├── xt_trade.py             # xtquant 类型化交易
+│   ├── gm_trade.py             # GM 类型化交易
+│   ├── tdx_trade.py            # TDX 类型化交易、幂等、对账
+│   └── gmtrade_proxy.py        # gmtrade sidecar 客户端
+├── providers/
+│   ├── base.py                 # Provider 基类、序列化、代码转换
+│   ├── xtquant_provider.py
+│   ├── gm_provider.py
+│   └── tdx_provider.py
+├── models/
+│   └── common.py
+├── tools/
+│   ├── gmtrade_bridge.py       # Python 3.10 JSON Lines sidecar
+│   └── requirements-gmtrade310.txt
+├── spikes/                     # TDX 实测脚本
+├── tests/                      # 单元/契约/接口测试
+├── tdx-spike-实测记录.md
+└── 代码问题评估与tdxquant接入规划.md
 ```
 
 ---
 
-## 🏗️ 架构
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        JingNiGateway v2.0                               │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌─────────────────┐          ┌─────────────────────────────────────┐   │
-│  │   HTTP API      │          │           WebSocket                 │   │
-│  │                 │          │                                     │   │
-│  │  /api/v1/rpc/*  │          │  /ws?client_id=xxx&api_key=xxx      │   │
-│  │  /api/v1/gm/*   │          │                                     │   │
-│  │  /api/v1/stats  │          │  - 行情订阅                          │   │
-│  │                 │          │  - 交易回调                          │   │
-│  └────────┬────────┘          └──────────────────┬──────────────────┘    │
-│           │                                      │                       │
-│           └──────────────────┬───────────────────┘                       │
-│                              │                                          │
-│  ┌───────────────────────────▼──────────────────────────────────────┐   │
-│  │                    ConnectionManager                              │   │
-│  │     连接管理    •    订阅管理    •    消息队列    •    心跳检测      │   │
-│  └───────────────────────────┬──────────────────────────────────────┘   │
-│                              │                                          │
-│  ┌───────────────────────────▼──────────────────────────────────────┐   │
-│  │                  RPC Executor (ThreadPool)                        │   │
-│  │   函数白名单检查  •  参数序列化  •  超时控制  •  错误处理            │   │
-│  └───────────────────────────┬──────────────────────────────────────┘   │
-│                              │                                          │
-│         ┌────────────────────┴────────────────────┐                     │
-│         │                                         │                     │
-│  ┌──────▼──────┐                         ┌───────▼───────┐              │
-│  │  xtquant    │                         │      gm       │              │
-│  │  Provider   │                         │   Provider    │              │
-│  ├─────────────┤                         ├───────────────┤              │
-│  │ • xtdata    │                         │ • gmdata      │              │
-│  │ • xttrader  │                         │ • gmtrade     │              │
-│  └─────────────┘                         └───────────────┘              │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 📦 安装
+## 安装
 
 ### 1. 前置要求
 
-| 组件 | 版本要求 | 说明 |
-|------|---------|------|
-| Python | 3.10 - 3.12 | 推荐使用 Python 3.10+ |
-| 迅投 QMT | 最新版 | 如需使用 xtquant 接口 |
-| 掘金量化 | 最新版 | 如需使用 gm 接口 |
+| 组件 | 要求 |
+|---|---|
+| Python | 3.10 - 3.12 |
+| 迅投 QMT | 可选；使用 xtquant 时需要 |
+| 掘金量化 | 可选；使用 GM 数据/交易时需要 |
+| 通达信金融终端 | 可选；使用 tdxquant 时需要，且需支持 TQ |
 
-### 2. 安装依赖
+### 2. 主环境
 
-```bash
-# 克隆项目
-git clone <repository-url>
-cd JingNiGateway
+```powershell
+cd D:\codebuddy\jingni-gateway
 
-# 创建虚拟环境
+uv venv --python 3.11 .venv
+uv pip install --python .\.venv\Scripts\python.exe -r requirements.txt
+```
+
+不使用 uv 时也可以：
+
+```powershell
 python -m venv .venv
-.venv\Scripts\activate  # Windows
-source .venv/bin/activate  # Linux/Mac
-
-# 安装依赖
+.\.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. 配置量化模块
+### 3. xtquant（可选）
 
-#### xtquant (迅投QMT)
+从 QMT 安装目录复制 `xtquant` 到项目虚拟环境：
 
-从 QMT 安装目录复制 `xtquant` 文件夹到虚拟环境：
-
-```bash
-# Windows 示例
+```powershell
 copy "D:\gjzq\qmt\bin.x64\Lib\site-packages\xtquant" ".venv\Lib\site-packages\"
 ```
 
-#### gm (掘金量化)
+当前机器 `D:\gjzq` 下没有 QMT/xtquant，只有 `ptrade`，因此 xtquant 尚未联调。
 
-安装到网关实际使用的项目虚拟环境（不要装到 uv 的 base Python）：
+### 4. GM（可选）
 
 ```powershell
-cd D:\codebuddy\jingni-gateway
-uv pip install --python .\.venv\Scripts\python.exe -U gm `
-  -i https://mirrors.aliyun.com/pypi/simple/
-# gm 3.0.193 的运行时还缺 six，需要补装
-uv pip install --python .\.venv\Scripts\python.exe six
+uv pip install --python .\.venv\Scripts\python.exe -U gm six
 ```
 
-注意：GM SDK 在 Python 3.11 下要求 `pandas<2.0`，安装时会把项目的 pandas 降到 1.5.3。
+注意：GM SDK 在 Python 3.11 下可能要求 `pandas<2.0`；若安装时发生降级，以实际依赖解析结果为准。
 
-#### gmtrade (GM 外部交易 sidecar)
-
-`gmtrade` 是独立程序化交易 SDK，不依赖 `gm.api` 的 `run()` 策略上下文；网关的 GM 下单/撤单/资金/持仓/委托已切到它。`gmtrade 3.0.6` 只有 `cp36`–`cp310` wheel，**不能装进 Python 3.11 的 `.venv`**，因此项目单独建 Python 3.10 sidecar：
+### 5. gmtrade sidecar（GM 交易必需）
 
 ```powershell
-cd D:\codebuddy\jingni-gateway
 uv venv --python 3.10 .venv310
-uv pip install --python .\.venv310\Scripts\python.exe gmtrade==3.0.6
+uv pip install --python .\.venv310\Scripts\python.exe -r tools\requirements-gmtrade310.txt
 ```
 
-网关启动时自动探测 `.venv310\Scripts\python.exe`；也可用环境变量覆盖：
+验证：
 
-```dotenv
-JINGNI_GMTRADE_PYTHON=D:\codebuddy\jingni-gateway\.venv310\Scripts\python.exe
-JINGNI_GMTRADE_ENDPOINT=api.myquant.cn:9000
+```powershell
+.\.venv310\Scripts\python.exe -c "import gmtrade; print(gmtrade.__version__)"
 ```
 
-- `gmdata` 行情仍走 `gm.api`；`gmtrade` 只负责交易与交易查询。
-- `get_cash/get_position/get_orders/order_volume/order_cancel` 经 `tools/gmtrade_bridge.py` 的 JSON Lines 协议调用，sidecar 只登录一个账户。
-- 当前验证：模拟账户 `nav=100000.00`，9.66 限价买入 `accepted`，撤单后 `status=5`，资金不变、无持仓；`/api/v1/gm/health` 会返回 `gmtrade_available`。
+### 6. TDX
+
+确认通达信终端已启动并登录，且安装目录下存在：
+
+```text
+<TDX_HOME>\PYPlugins\user\tqcenter
+```
+
+配置 `JINGNI_TDX_HOME` 指向该安装目录。交易还需要配置 `JINGNI_TDX_ACCOUNT`。
 
 ---
 
-## 🚀 快速开始
+## 配置
 
-### 1. 配置服务
+不要修改 `config.py` 写死凭据。复制模板并填写 `.env`：
 
-编辑 `config.py`：
-
-```python
-class Config:
-    # MiniQMT 客户端路径（xtquant 需要）
-    MINI_QMT_PATH = r"D:\qmt\userdata_mini"
-    
-    # 资金账户
-    ACCOUNT_ID = "your-account-id"
-    
-    # API 密钥
-    API_KEY = "your-api-key"
-    
-    # 服务配置
-    API_HOST = "0.0.0.0"
-    API_PORT = 8000
-    
-    # gm (掘金量化) 配置
-    GM = GMConfig(
-        enabled=True,
-        token="your-gm-token",
-        strategy_id="your-strategy-id"
-    )
+```powershell
+copy .env.example .env
 ```
 
-### 2. 启动服务
+### 核心环境变量
 
-```bash
+| 变量 | 说明 |
+|---|---|
+| `JINGNI_API_KEY` | API 认证密钥；为空时受保护接口拒绝访问 |
+| `JINGNI_API_HOST` | 监听地址，默认 `127.0.0.1` |
+| `JINGNI_API_PORT` | 端口，默认 `8000` |
+| `JINGNI_LOG_LEVEL` | 日志级别 |
+| `JINGNI_QMT_PATH` | MiniQMT `userdata_mini` 路径 |
+| `JINGNI_QMT_ACCOUNT` | QMT 资金账号 |
+| `JINGNI_GM_ENABLED` | `1/0` 是否启用 GM |
+| `JINGNI_GM_TOKEN` | 掘金 Token |
+| `JINGNI_GM_STRATEGY_ID` | 掘金策略 ID |
+| `JINGNI_GM_ACCOUNT_ID` | GM 资金账户 ID |
+| `JINGNI_GMTRADE_PYTHON` | gmtrade sidecar Python；默认 `.venv310\Scripts\python.exe` |
+| `JINGNI_GMTRADE_ENDPOINT` | 默认 `api.myquant.cn:9000`；实盘按掘金/券商指引调整 |
+| `JINGNI_TDX_ENABLED` | `1/0` 是否启用 TDX |
+| `JINGNI_TDX_HOME` | 通达信安装目录 |
+| `JINGNI_TDX_ACCOUNT` | TDX 资金账户 |
+| `JINGNI_TDX_ACCOUNT_TYPE` | 默认 `stock` |
+| `JINGNI_TDX_TIMEOUT` | 数据/交易调用超时，默认 `30` 秒 |
+| `JINGNI_TDX_CANCEL_RECONCILE_TIMEOUT` | 撤单对账超时，默认 `30` 秒 |
+| `JINGNI_TDX_POLL_INTERVAL` | 委托状态轮询间隔，默认 `1.0` 秒 |
+| `JINGNI_TDX_IDEMPOTENCY_DB` | 默认 `data/tdx_idempotency.sqlite3` |
+
+`.env` 已在 `.gitignore` 中；不要提交 Token、API Key、账号。
+
+---
+
+## 启动
+
+```powershell
 python main.py
 ```
 
-或使用 uvicorn：
+或：
 
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```powershell
+uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-### 3. 访问服务
+访问：
 
-| 端点 | 地址 | 说明 |
-|------|------|------|
-| 服务地址 | http://localhost:8000 | 根路径 |
-| API 文档 | http://localhost:8000/docs | Swagger UI |
-| 备用文档 | http://localhost:8000/redoc | ReDoc |
-| WebSocket | ws://localhost:8000/ws | WebSocket 连接 |
+| 地址 | 说明 |
+|---|---|
+| `http://127.0.0.1:8000/` | 服务信息 |
+| `http://127.0.0.1:8000/health` | 总健康检查 |
+| `http://127.0.0.1:8000/docs` | Swagger UI |
+| `http://127.0.0.1:8000/redoc` | ReDoc |
+| `ws://127.0.0.1:8000/ws?client_id=xxx&api_key=xxx` | WebSocket |
 
 ---
 
-## 📖 API文档
+## API
 
-### HTTP API
+所有受保护接口都需要：
 
-#### xtquant RPC 执行
-
-```bash
-POST /api/v1/rpc/execute
+```http
+X-API-Key: <JINGNI_API_KEY>
 ```
 
-**请求示例**：
+### 通用端点
 
-```bash
-curl -X POST "http://localhost:8000/api/v1/rpc/execute" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
+| 方法 | 端点 | 说明 |
+|---|---|---|
+| GET | `/` | 服务信息与 Provider 状态 |
+| GET | `/health` | 总健康检查 |
+| GET | `/api/v1/stats` | 连接统计与白名单 |
+| WS | `/ws` | 行情/交易事件 WebSocket |
+
+### xtquant
+
+| 方法 | 端点 | 说明 |
+|---|---|---|
+| GET | `/api/v1/xtquant/health` | 健康检查 |
+| POST | `/api/v1/xtquant/rpc/execute` | 白名单内 RPC，模块 `xtdata` 或 `xttrader`；交易写操作只走 `/trade/*` |
+| GET | `/api/v1/xtquant/rpc/methods` | 可用方法 |
+| GET | `/api/v1/xtquant/rpc/whitelist` | 白名单 |
+| POST | `/api/v1/xtquant/symbol/convert` | 代码格式转换 |
+| POST | `/api/v1/xtquant/trade/order` | 类型化下单 |
+| POST | `/api/v1/xtquant/trade/cancel` | 类型化撤单 |
+| GET | `/api/v1/xtquant/trade/orders` | 委托查询 |
+| GET | `/api/v1/xtquant/trade/asset` | 资金查询 |
+| GET | `/api/v1/xtquant/trade/positions` | 持仓查询 |
+
+### GM
+
+| 方法 | 端点 | 说明 |
+|---|---|---|
+| GET | `/api/v1/gm/health` | 健康检查，含 `gmtrade_available` |
+| POST | `/api/v1/gm/rpc/execute` | 白名单内 RPC，模块 `gmdata` 或 `gmtrade`；交易写操作只走 `/trade/*` |
+| GET | `/api/v1/gm/rpc/methods` | 可用方法 |
+| GET | `/api/v1/gm/rpc/whitelist` | 白名单 |
+| POST | `/api/v1/gm/trade/order` | 类型化按量下单 |
+| POST | `/api/v1/gm/trade/cancel` | 撤单，支持 `order_id` 或 `cl_ord_id` |
+| GET | `/api/v1/gm/trade/orders` | 委托查询 |
+| GET | `/api/v1/gm/trade/asset` | 资金查询 |
+| GET | `/api/v1/gm/trade/positions` | 持仓查询 |
+
+GM 注意：
+
+- 不要调用 `gm.api.set_account_id()`；它会导致 `get_cash/get_position` 返回 `1013`。
+- 网关只 `set_token`，查询时显式传 `account_id`。
+- 交易链路为 `GMTradeService → GMTradeProxy → gmtrade_bridge → gmtrade`。
+
+### tdxquant
+
+| 方法 | 端点 | 说明 |
+|---|---|---|
+| GET | `/api/v1/tdxquant/health` | 健康检查，含 `logged_in` |
+| POST | `/api/v1/tdxquant/rpc/execute` | 白名单内 RPC，模块 `tdxdata` 或 `tdxtrade`；交易写操作只走 `/trade/*` |
+| GET | `/api/v1/tdxquant/rpc/methods` | 可用方法 |
+| GET | `/api/v1/tdxquant/rpc/whitelist` | 白名单 |
+| POST | `/api/v1/tdxquant/trade/order` | 类型化下单，`notify` 三态 |
+| POST | `/api/v1/tdxquant/trade/cancel` | 撤单并做状态对账 |
+| GET | `/api/v1/tdxquant/trade/orders` | 委托查询 |
+| GET | `/api/v1/tdxquant/trade/asset` | 资金查询 |
+| GET | `/api/v1/tdxquant/trade/positions` | 持仓查询 |
+
+TDX 数据参数：
+
+- `get_stock_list` 的 `market` 是分类编码，不是 `SH/SZ/BJ`：
+  - `5` 全部 A 股
+  - `7` 上证主板
+  - `8` 深证主板
+  - `53` 北交所
+  - 其他分类值以当前终端返回为准
+- `get_market_data` 的分钟线依赖终端已下载盘后数据/Level2；当前终端 `1m/5m/15m/30m/1h` 为空，`60m` 返回错误结构。
+- `get_kzz_info` 只接受可转债代码，例如 `123039.SZ`；终端无数据包时返回空。
+
+---
+
+## 请求示例
+
+### 数据 RPC
+
+```powershell
+curl.exe -X POST "http://127.0.0.1:8000/api/v1/tdxquant/rpc/execute" `
+  -H "X-API-Key: your-api-key" `
+  -H "Content-Type: application/json" `
   -d '{
-    "module": "xtdata",
+    "module": "tdxdata",
     "function": "get_market_data",
     "kwargs": {
-      "field_list": ["close"],
-      "stock_list": ["000001.SZ"],
+      "stock_list": ["600000.SH"],
       "period": "1d",
-      "start_time": "20240101",
-      "end_time": "20241231"
+      "count": 10
     },
     "timeout": 30
   }'
 ```
 
-**响应示例**：
+### TDX 类型化下单
 
 ```json
 {
-  "success": true,
-  "data": {
-    "000001.SZ": {
-      "close": [10.5, 10.6, 10.7]
-    }
-  },
-  "execution_time_ms": 125.5
+  "stock_code": "600000.SH",
+  "order_type": 0,
+  "order_volume": 100,
+  "price_type": 0,
+  "price": 9.66,
+  "notify": 0,
+  "client_order_id": "demo-tdx-001"
 }
 ```
 
-#### gm (掘金量化) RPC 执行
+`order_type`：`0` 买入 / `1` 卖出；`price_type`：`0` 限价 / `1` 市价 / `2` 涨停 / `3` 跌停。
 
-```bash
-POST /api/v1/gm/rpc/execute
+### GM 类型化下单
+
+```json
+{
+  "symbol": "SHSE.600000",
+  "volume": 100,
+  "side": 0,
+  "order_type": 0,
+  "price": 9.66,
+  "position_effect": 1,
+  "client_order_id": "demo-gm-001"
+}
 ```
 
-**请求示例**：
+`side`：`0` 买入 / `1` 卖出；`order_type`：`0` 限价 / `1` 市价；`position_effect`：`1` 开仓 / `2` 平仓 / `3` 平今。
 
-```bash
-curl -X POST "http://localhost:8000/api/v1/gm/rpc/execute" \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "module": "gmdata",
-    "function": "history_n",
-    "kwargs": {
-      "symbol": "SZSE.002594",
-      "frequency": "1d",
-      "count": 10
-    }
-  }'
+---
+
+## WebSocket
+
+连接：
+
+```text
+ws://127.0.0.1:8000/ws?client_id=demo&api_key=<JINGNI_API_KEY>
 ```
 
-#### 获取可用方法列表
+订阅行情：
 
-```bash
-# xtquant 方法
-GET /api/v1/rpc/methods?module=xtdata
-
-# gm 方法
-GET /api/v1/gm/rpc/methods?module=gmdata
+```json
+{
+  "type": "subscribe_quote",
+  "stock_code": "000001.SZ",
+  "period": "tick"
+}
 ```
 
-#### 获取函数白名单
-
-```bash
-GET /api/v1/rpc/whitelist
-```
-
-#### 获取服务统计
-
-```bash
-GET /api/v1/stats
-```
-
-### WebSocket API
-
-#### Python 示例
-
-```python
-import asyncio
-import websockets
-import json
-
-async def test_ws():
-    uri = "ws://localhost:8000/ws?client_id=test_client&api_key=your-api-key"
-    async with websockets.connect(uri) as ws:
-        # 接收连接成功消息
-        welcome = await ws.recv()
-        print(f"欢迎消息: {welcome}")
-
-        # 订阅行情
-        await ws.send(json.dumps({
-            "type": "subscribe_quote",
-            "stock_code": "000001.SZ",
-            "period": "tick"
-        }))
-
-        # 接收实时行情
-        while True:
-            data = await ws.recv()
-            print(data)
-
-asyncio.run(test_ws())
-```
-
-#### WebSocket 消息类型
+消息类型：
 
 | 类型 | 方向 | 说明 |
-|------|------|------|
+|---|---|---|
 | `connected` | 服务端 → 客户端 | 连接成功 |
-| `subscribe_quote` | 客户端 → 服务端 | 订阅行情 |
+| `subscribe_quote` | 客户端 → 服务端 | 单标的订阅 |
+| `subscribe_whole_quote` | 客户端 → 服务端 | 全量行情订阅 |
 | `unsubscribe_quote` | 客户端 → 服务端 | 取消订阅 |
-| `quote_data` | 服务端 → 客户端 | 行情数据推送 |
-| `rpc_call` | 客户端 → 服务端 | RPC 调用 |
-| `rpc_response` | 服务端 → 客户端 | RPC 响应 |
-| `heartbeat` | 服务端 → 客户端 | 心跳检测 |
-| `pong` | 服务端 → 客户端 | 心跳响应 |
+| `subscribed` | 服务端 → 客户端 | 订阅成功 |
+| `whole_quote` | 服务端 → 客户端 | 全量行情推送 |
+| `quote_data` | 服务端 → 客户端 | 行情数据 |
+| `rpc_call` / `rpc_response` | 双向 | WebSocket RPC |
+| `ping` / `pong` | 双向 | 心跳 |
+| `reconnect` | 客户端 → 服务端 | 重连令牌 |
+| `trade_event` | 服务端 → 客户端 | 交易事件（预留） |
+| `error` | 服务端 → 客户端 | 错误信息 |
+
+当前行情推送依赖 xtquant；本机没有 xtquant SDK 时，订阅会返回 `xtdata 模块不可用`。
 
 ---
 
-## 🧪 测试
+## 测试
 
-### 运行所有测试
-
-```bash
-pytest tests/ -v
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-### 运行特定测试
+当前基线：
 
-```bash
-# API 健康检查
-pytest tests/test_api_health.py -v
-
-# XtQuant 数据接口
-pytest tests/test_xtquant_data.py -v
-
-# GM 数据接口
-pytest tests/test_gm_data.py -v
+```text
+84 passed, 5 skipped
 ```
 
-### 测试覆盖率
+按模块：
 
-```bash
-pytest tests/ --cov=. --cov-report=html
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_tdx_trade.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_gm_trade.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_gmtrade_proxy.py -q
 ```
 
----
-
-## 📋 支持的接口
-
-### xtquant (迅投QMT)
-
-#### xtdata 行情接口
-
-| 函数 | 说明 |
-|------|------|
-| `get_market_data` | 获取历史行情 |
-| `get_full_tick` | 获取 Tick 数据 |
-| `get_instrument_detail` | 获取合约详情 |
-| `get_trading_dates` | 获取交易日历 |
-| `get_financial_data` | 获取财务数据 |
-| `subscribe_quote` | 订阅行情 |
-| `download_history_data` | 下载历史数据 |
-
-#### xttrader 交易接口
-
-交易写操作只允许走类型化端点；通用 RPC 仅保留查询。
-
-| 端点 / 函数 | 说明 |
-|------|------|
-| `POST /api/v1/xtquant/trade/order` | 类型化下单（`client_order_id` 幂等） |
-| `POST /api/v1/xtquant/trade/cancel` | 类型化撤单 |
-| `GET /api/v1/xtquant/trade/orders` | 查询委托 |
-| `GET /api/v1/xtquant/trade/asset` | 查询资金 |
-| `GET /api/v1/xtquant/trade/positions` | 查询持仓 |
-| `query_stock_asset` / `query_stock_orders` / `query_stock_positions` | 通用 RPC 只读查询 |
-
-### gm (掘金量化)
-
-#### gmdata 数据接口
-
-| 函数 | 说明 |
-|------|------|
-| `history_n` | 获取历史行情 |
-| `history` | 获取历史行情 |
-| `get_instruments` | 获取标的信息 |
-| `get_trading_dates` | 获取交易日历 |
-| `stk_get_fundamentals_*` | 获取财务数据 |
-| `stk_get_daily_*` | 获取每日数据 |
-
-#### gmtrade 交易接口
-
-| 端点 / 函数 | 说明 |
-|------|------|
-| `POST /api/v1/gm/trade/order` | 类型化按量下单（`client_order_id` 幂等） |
-| `POST /api/v1/gm/trade/cancel` | 类型化撤单 |
-| `GET /api/v1/gm/trade/orders` | 查询订单 |
-| `GET /api/v1/gm/trade/asset` | 查询资金 |
-| `GET /api/v1/gm/trade/positions` | 查询持仓 |
-
-GM SDK `3.0.193` 注意：不要调用 `gm.api.set_account_id()`，该全局设置会让后续 `get_cash/get_position` 返回 `1013`。网关现在只 `set_token`，查询时显式传 `account_id`。
-
-GM 交易链路：`/api/v1/gm/trade/*` → `GMTradeService` → `GMTradeProxy` → `.venv310` 的 `tools/gmtrade_bridge.py` → `gmtrade.order_volume/order_cancel`。`/trade/cancel` 接受 `order_id` 或 `cl_ord_id`，传 `order_id` 时网关先按委托列表解析 `cl_ord_id`。
-
-| `get_cash` / `get_position` / `get_orders` | 通用 RPC 只读查询 |
-
-### tdxquant (通达信量化)
-
-| 端点 | 说明 |
-|------|------|
-| `GET /api/v1/tdxquant/health` | 健康检查（含 `logged_in`） |
-| `POST /api/v1/tdxquant/rpc/execute` | 数据 RPC（仅 `tdxdata`） |
-| `POST /api/v1/tdxquant/trade/order` | 类型化下单（`client_order_id` 幂等） |
-| `POST /api/v1/tdxquant/trade/cancel` | 撤单并做状态对账 |
-| `GET /api/v1/tdxquant/trade/orders` | 查询委托 |
-| `GET /api/v1/tdxquant/trade/asset` | 查询资金（以 `Cash` 为准） |
-| `GET /api/v1/tdxquant/trade/positions` | 查询持仓 |
-
-幂等说明：`client_order_id` 先查进程内缓存，再查 `JINGNI_TDX_IDEMPOTENCY_DB`（默认 `data/tdx_idempotency.sqlite3`）；accepted 与 pending_confirm 都会落盘，网关重启后同 key 返回 `idempotent_replay=true`。`notify=1` 返回 `pending_confirm`，需在通达信客户端手动确认。
-
-数据参数补充：
-
-- `get_stock_list` 的 `market` 是通达信分类编码，不是 `SH/SZ/BJ`。常用值：`5` 全部 A 股、`7` 上证主板、`8` 深证主板、`50` 沪深 A 股、`53` 北交所、`32` 可转债。实测 `market=5` 返回 5584 只、`7` 返回 1700 只、`8` 返回 1494 只、`53` 返回 358 只。
-- `get_market_data` 在 tqcenter 本地模式下，分钟线要求客户端已下载对应盘后数据；有 Level2 权限才能取分钟线。当前终端 `1m/5m/15m/30m/1h` 返回空字典，`60m` 返回 `error/msg` 结构，属于终端数据权限/下载问题，不是网关丢数据。
-- `get_kzz_info` 只接受可转债代码，例如 `123039.SZ`；传正股代码或终端没有可转债数据包时返回空字典。
+测试不会主动下实盘单；TDX/GM 真实交易需要交易时段和显式配置。
 
 ---
 
-## 🔧 开发指南
+## 已知限制
 
-### 代码规范
-
-- 使用 Python 3.10+ 特性
-- 遵循 PEP 8 编码规范
-- 类名使用 PascalCase
-- 函数和变量使用 snake_case
-- 常量使用 UPPER_SNAKE_CASE
-
-### 添加新的 RPC 函数
-
-1. 在 `core/whitelist.py` 中添加函数到白名单
-2. 在相应的 provider 中实现功能
-3. 添加测试用例
-
-### 添加新的 Provider
-
-1. 继承 `providers/base.py` 中的 `BaseProvider`
-2. 实现所有抽象方法
-3. 在 `main.py` 中注册 provider
+1. **xtquant 未真实联调**：本机 `D:\gjzq` 只有 `ptrade`，没有 QMT/xtquant。
+2. **GM 事件回调未启用**：`gmtrade.start()` 在仿真端点返回 `-1`，当前交易状态通过 `get_orders()` 轮询。
+3. **GM sidecar 单账户**：当前只登录一个 `JINGNI_GM_ACCOUNT_ID`；多账户需要改成按账户路由。
+4. **TDX 分钟数据缺失**：依赖终端盘后数据/Level2，网关无法凭空补齐。
+5. **TDX 收盘后 OMS 不可用**：真实委托验收需交易时段。
+6. **TDX `notify=1` 需人工确认**：网关只透传 `pending_confirm`。
+7. **未推送远端、未改写 Git 历史**：旧凭据清理需单独授权。
 
 ---
 
-## 📄 许可证
+## 相关文档
+
+- `tdx-spike-实测记录.md`：TDX tqcenter、notify、幂等、gmtrade sidecar 实测记录
+- `代码问题评估与tdxquant接入规划.md`：历史问题评估与接入规划
+- `方案复核意见与优化建议.md`：对评估方案的外部复核意见
+
+---
+
+## License
 
 MIT License
-
----
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
