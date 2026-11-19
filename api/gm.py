@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import inspect
 import logging
 
 from models.common import RpcExecuteRequest, SymbolConvertRequest
