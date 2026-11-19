@@ -128,6 +128,8 @@ jingni-gateway/
 
 ## 安装
 
+> 路径约定：项目内路径均相对项目根目录；`<QMT_HOME>`、`<TDX_HOME>` 为外部终端安装目录占位符，按本机环境替换。
+
 ### 1. 前置要求
 
 | 组件 | 要求 |
@@ -139,9 +141,9 @@ jingni-gateway/
 
 ### 2. 主环境
 
-```powershell
-cd D:\codebuddy\jingni-gateway
+以下命令均在项目根目录执行：
 
+```powershell
 uv venv --python 3.11 .venv
 uv pip install --python .\.venv\Scripts\python.exe -r requirements.txt
 ```
@@ -159,10 +161,10 @@ pip install -r requirements.txt
 从 QMT 安装目录复制 `xtquant` 到项目虚拟环境：
 
 ```powershell
-copy "D:\gjzq\qmt\bin.x64\Lib\site-packages\xtquant" ".venv\Lib\site-packages\"
+copy "<QMT_HOME>\bin.x64\Lib\site-packages\xtquant" ".venv\Lib\site-packages\"
 ```
 
-当前机器 `D:\gjzq` 下没有 QMT/xtquant，只有 `ptrade`，因此 xtquant 尚未联调。
+当前机器 QMT 安装目录下没有 `xtquant`，只有 `ptrade`，因此 xtquant 尚未联调。
 
 ### 4. GM（可选）
 
@@ -456,7 +458,7 @@ ws://127.0.0.1:8000/ws?client_id=demo&api_key=<JINGNI_API_KEY>
 
 ## 已知限制
 
-1. **xtquant 未真实联调**：本机 `D:\gjzq` 只有 `ptrade`，没有 QMT/xtquant。
+1. **xtquant 未真实联调**：本机 QMT 安装目录下只有 `ptrade`，没有 QMT/xtquant。
 2. **GM 事件回调未启用**：`gmtrade.start()` 在仿真端点返回 `-1`，当前交易状态通过 `get_orders()` 轮询。
 3. **GM sidecar 单账户**：当前只登录一个 `JINGNI_GM_ACCOUNT_ID`；多账户需要改成按账户路由。
 4. **TDX 分钟数据缺失**：依赖终端盘后数据/Level2，网关无法凭空补齐。

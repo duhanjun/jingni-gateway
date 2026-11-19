@@ -1,7 +1,7 @@
 # tdxquant 接入实测记录（最终：tqcenter 单通道）
 
 - 实测时间：2026-11-19 11:25–13:30
-- 环境：`C:\new_tdx_mock`，通达信金融终端（量化模拟）V7.73，模拟资金账户 `11048389`
+- 环境：`<TDX_HOME>`，通达信金融终端（量化模拟）V7.73，模拟资金账户 `11048389`
 - 方式：先探测 HTTP `127.0.0.1:17709`（已否决并删除），最终只保留 `tqcenter` 直连
 - 状态：数据面 + 交易面（下单 / 查委托 / 撤单）全链路已验证
 
@@ -238,7 +238,7 @@ HTTP 时代的对照：同样返回 `Value=2`、`Wtbh="211428"`，但整数 `ord
 
 ## 九、网关功能矩阵复测（2026-11-19 16:10，模拟账户）
 
-环境：项目 `.venv`（Python 3.11.14）、tdx 模拟终端 `C:\new_tdx_mock`、账户 `11048389`；GM SDK `3.0.193` 已安装。
+环境：项目 `.venv`（Python 3.11.14）、tdx 模拟终端 `<TDX_HOME>`、账户 `11048389`；GM SDK `3.0.193` 已安装。
 
 ### 9.1 tdx 数据接口
 
@@ -285,7 +285,7 @@ HTTP 时代的对照：同样返回 `Value=2`、`Wtbh="211428"`，但整数 `ord
 
 ## 十、GM 配置后与 TDX notify/重启幂等复测（2026-11-19 16:36–16:50）
 
-环境：项目 `.venv`、tdx 模拟终端 `C:\new_tdx_mock`、账户 `11048389`、GM 终端 `D:\gszq\Goldminer\Guosheng Goldminer`。
+环境：项目 `.venv`、tdx 模拟终端 `<TDX_HOME>`、账户 `11048389`、GM 终端 `<GM_TERMINAL_HOME>`。
 
 ### 10.1 GM 配置与真实接口
 
@@ -438,10 +438,9 @@ HTTP 时代的对照：同样返回 `Value=2`、`Wtbh="211428"`，但整数 `ord
 
 ### 11.1 安装位置
 
-`gmtrade 3.0.6` 只发布 `cp36m/cp37m/cp38/cp39/cp310` wheel，没有 `cp311`，无法装进项目 Python 3.11 的 `.venv`。已创建项目内 Python 3.10 sidecar：
+`gmtrade 3.0.6` 只发布 `cp36m/cp37m/cp38/cp39/cp310` wheel，没有 `cp311`，无法装进项目 Python 3.11 的 `.venv`。已创建项目内 Python 3.10 sidecar（以下命令在项目根目录执行）：
 
 ```powershell
-cd D:\codebuddy\jingni-gateway
 uv venv --python 3.10 .venv310
 uv pip install --python .\.venv310\Scripts\python.exe gmtrade==3.0.6
 ```

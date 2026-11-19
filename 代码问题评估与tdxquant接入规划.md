@@ -280,7 +280,7 @@ config.py                        TDXConfig：enabled、tdx_install_path、python
 | P1 WebSocket 限额/心跳 | 完成 | `MAX_CONNECTIONS`、同 client_id 替换、心跳超时关闭、`ping/pong` |
 | P1 数据契约测试 | 完成 | DataFrame 序列化 + tdx 日线黄金样本 |
 | P1 TDX notify 与跨重启幂等 | 完成（模拟验证） | `notify=1` 返回 `pending_confirm`；pending 也缓存；SQLite 持久化，新进程同 key 返回 `idempotent_replay=true` |
-| 实盘验证 | 待办 | TDX 模拟登录态已恢复（`logged_in=true`、cash `998908.59`）；收盘后 OMS 返回 `服务未就绪(OMS)`，真实 accepted 委托闭环需交易时段；GM 模拟账户 gmtrade 闭环已通过，实盘小额验证待做；xtquant 无 SDK（`D:\gjzq` 只有 ptrade，无 QMT）；实盘自动下单需小额验证 |
+| 实盘验证 | 待办 | TDX 模拟登录态已恢复（`logged_in=true`、cash `998908.59`）；收盘后 OMS 返回 `服务未就绪(OMS)`，真实 accepted 委托闭环需交易时段；GM 模拟账户 gmtrade 闭环已通过，实盘小额验证待做；xtquant 无 SDK（本机 QMT 安装目录只有 ptrade，无 QMT）；实盘自动下单需小额验证 |
 
 ---
 
