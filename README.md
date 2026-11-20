@@ -34,7 +34,7 @@
 |---|---|---|---|---|
 | xtquant | `POST /api/v1/xtquant/trade/order` | `/trade/cancel` | `/trade/asset`、`/trade/positions`、`/trade/orders` | 代码已接入；本机未安装 xtquant SDK，尚未真实联调 |
 | GM | `POST /api/v1/gm/trade/order` | `/trade/cancel` | 同上 | `gmtrade` sidecar；模拟账户已验证下单→撤单闭环 |
-| tdxquant | `POST /api/v1/tdxquant/trade/order` | `/trade/cancel` | 同上 | `tqcenter` 直连；模拟账户已验证登录、资金/持仓/委托查询；真实 `accepted` 委托待交易时段复验 |
+| tdxquant | `POST /api/v1/tdxquant/trade/order` | `/trade/cancel` | 同上 | `tqcenter` 直连；模拟账户开盘时段 `accepted`、撤单、跨重启幂等已验证；真实账户待实盘 |
 
 ### 幂等与交易状态
 
@@ -77,7 +77,7 @@
 | GM `gmtrade` 模拟账户 | 登录、资金、持仓、委托、下单、撤单已验证 |
 | GM 实盘 | 未切换、未下实盘单 |
 | TDX tqcenter 登录与资产 | 模拟账户 `logged_in=true`，资产可查 |
-| TDX 模拟交易 | 登录、资金/持仓/委托查询、`notify` 三态已验证；真实 `accepted` 委托与撤单需交易时段 |
+| TDX 模拟交易 | 登录、资金/持仓/委托查询、开盘时段 `accepted`/撤单、跨重启幂等已验证；实盘待小额验证 |
 | TDX 实盘 | 券商已开放 TQ 自动下单权限，尚未做实盘小额验证 |
 | TDX 分钟数据 | 当前终端无分钟数据/Level2，`1m/5m/15m/30m/1h` 为空 |
 | 自动化测试 | `84 passed, 5 skipped` |
