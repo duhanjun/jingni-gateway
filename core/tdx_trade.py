@@ -55,10 +55,13 @@ class TdxTradeService:
         self._poll_interval = tdx.poll_interval if tdx else 1.0
 
         # 进程内下单幂等缓存：key = client_order_id，TTL 10 分钟，最多 1000 条。
-        # accepted 与 pending_confirm 都缓存；可选 SQLite 落盘用于跨重启重放。
+        # accepted 与 pending_confirm 都缓存；pending 等待人工确认，单独使用更长 TTL。
         self._order_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._order_cache_lock = threading.Lock()
         self._order_cache_ttl = 600.0
+        self._pending_order_cache_ttl = float(
+            getattr(tdx, "pending_idempotency_ttl", 1800) if tdx else 1800
+        )
         self._order_cache_max = 1000
         self._state_path = str(state_path) if state_path else None
         self._state_lock = threading.Lock()
@@ -151,11 +154,13 @@ class TdxTradeService:
         with self._order_cache_lock:
             entry = self._order_cache.get(client_order_id)
             if entry is not None:
-                if time.monotonic() - entry["ts"] > self._order_cache_ttl:
+                result = entry["result"]
+                ttl = self._ttl_for_result(result)
+                if time.monotonic() - entry["ts"] > ttl:
                     self._order_cache.pop(client_order_id, None)
                 else:
                     self._order_cache.move_to_end(client_order_id)
-                    return entry["result"]
+                    return result
 
         persisted = self._get_persisted_order(client_order_id)
         if persisted is None:
@@ -167,6 +172,12 @@ class TdxTradeService:
             }
             self._order_cache.move_to_end(client_order_id)
         return persisted
+
+    def _ttl_for_result(self, result: Dict[str, Any]) -> float:
+        """pending_confirm 等人工确认，使用更长的幂等窗口。"""
+        if result.get("state") == "pending_confirm":
+            return self._pending_order_cache_ttl
+        return self._order_cache_ttl
 
     def _cache_order(self, client_order_id: str, result: Dict[str, Any]) -> None:
         self._save_persisted_order(client_order_id, result)
@@ -208,14 +219,15 @@ class TdxTradeService:
                 ).fetchone()
                 if row is None:
                     return None
-                if time.time() - float(row[0]) > self._order_cache_ttl:
+                result = json.loads(row[1])
+                if time.time() - float(row[0]) > self._ttl_for_result(result):
                     conn.execute(
                         "DELETE FROM tdx_order_idempotency WHERE client_order_id = ?",
                         (client_order_id,),
                     )
                     conn.commit()
                     return None
-                return json.loads(row[1])
+                return result
             except (sqlite3.Error, ValueError, TypeError) as exc:
                 logger.warning("tdx idempotency read failed: %s", exc)
                 return None

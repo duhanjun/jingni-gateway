@@ -3,6 +3,7 @@
 
 import asyncio
 import sys
+import time
 import types
 from types import SimpleNamespace
 
@@ -188,6 +189,56 @@ def test_place_order_pending_confirm_is_idempotent(fake_env):
     ))
     second = asyncio.run(service.place_order(
         "600000.SH", 0, 100, 0, 9.00, 1, client_order_id="notify-key-1"
+    ))
+
+    assert len(fake.order_calls) == 1
+    assert first["state"] == "pending_confirm"
+    assert second["idempotent_replay"] is True
+    assert second["state"] == "pending_confirm"
+
+
+def test_pending_confirm_uses_longer_ttl_than_accepted(fake_env):
+    provider, service, fake = fake_env
+    service._order_cache_ttl = 0.01
+    service._pending_order_cache_ttl = 10.0
+    fake.order_result = {
+        "ErrorId": "0", "Msg": "已发送信号至客户端，待用户确认！", "Value": 1,
+    }
+
+    first = asyncio.run(service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id="notify-key-long"
+    ))
+    time.sleep(0.03)
+    second = asyncio.run(service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id="notify-key-long"
+    ))
+
+    assert len(fake.order_calls) == 1
+    assert first["state"] == "pending_confirm"
+    assert second["idempotent_replay"] is True
+    assert second["state"] == "pending_confirm"
+
+
+def test_pending_confirm_persisted_uses_longer_ttl(fake_env, tmp_path):
+    provider, _, fake = fake_env
+    db_path = str(tmp_path / "tdx_idempotency_pending.sqlite3")
+    fake.order_result = {
+        "ErrorId": "0", "Msg": "已发送信号至客户端，待用户确认！", "Value": 1,
+    }
+
+    first_service = TdxTradeService(provider, provider._config, state_path=db_path)
+    first_service._order_cache_ttl = 0.01
+    first_service._pending_order_cache_ttl = 10.0
+    first = asyncio.run(first_service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id="notify-restart-long"
+    ))
+    time.sleep(0.03)
+
+    second_service = TdxTradeService(provider, provider._config, state_path=db_path)
+    second_service._order_cache_ttl = 0.01
+    second_service._pending_order_cache_ttl = 10.0
+    second = asyncio.run(second_service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id="notify-restart-long"
     ))
 
     assert len(fake.order_calls) == 1

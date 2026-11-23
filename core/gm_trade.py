@@ -4,6 +4,7 @@ GM (掘金量化) 类型化交易服务。
 只暴露 order_volume / order_cancel / 查询，不把下单能力留在通用反射 RPC。
 """
 
+import asyncio
 import logging
 import threading
 import time
@@ -124,6 +125,17 @@ class GMTradeService:
             "idempotent_replay": False,
         }
 
+        # GM 的 order_volume 返回“已报”后，柜台仍可能立即拒单（status=8）。
+        # 做一次短延迟查询，避免 API 把已拒绝委托返回成 accepted。
+        if accepted:
+            snapshot = await self._initial_order_snapshot(str(order_id))
+            if snapshot is not None:
+                canonical["status"] = snapshot.get("status")
+                if snapshot.get("status") == 8:
+                    canonical["state"] = "rejected"
+                    canonical["success"] = False
+                    canonical["reject_reason"] = snapshot.get("ord_rej_reason_detail")
+
         if client_order_id and accepted:
             self._cache_order(client_order_id, canonical)
 
@@ -132,6 +144,19 @@ class GMTradeService:
             symbol, canonical["side"], volume, canonical["state"], canonical["order_id"],
         )
         return canonical
+
+    async def _initial_order_snapshot(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """短延迟查一次委托，识别柜台立即拒单；查询失败不影响已受理结果。"""
+        try:
+            await asyncio.sleep(0.15)
+            orders = await self.query_orders()
+        except Exception as exc:
+            logger.warning("GM 下单后状态查询失败: %s", exc)
+            return None
+        for order in orders:
+            if isinstance(order, dict) and str(order.get("order_id")) == str(order_id):
+                return order
+        return None
 
     async def cancel_order(self, order_id: str, cl_ord_id: Optional[str] = None) -> Dict[str, Any]:
         # gm.api / gmtrade.order_cancel 接收单个 dict 或 list[dict]，键是 cl_ord_id/account_id。

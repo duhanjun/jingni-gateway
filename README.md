@@ -33,8 +33,8 @@
 | Provider | 下单 | 撤单 | 资金/持仓/委托 | 说明 |
 |---|---|---|---|---|
 | xtquant | `POST /api/v1/xtquant/trade/order` | `/trade/cancel` | `/trade/asset`、`/trade/positions`、`/trade/orders` | 代码已接入；本机未安装 xtquant SDK，尚未真实联调 |
-| GM | `POST /api/v1/gm/trade/order` | `/trade/cancel` | 同上 | `gmtrade` sidecar；模拟账户限价/市价、成交、撤单、幂等已验证；卖出受 T+1 限制 |
-| tdxquant | `POST /api/v1/tdxquant/trade/order` | `/trade/cancel` | 同上 | `tqcenter` 直连；模拟账户开盘时段 `accepted`、撤单、跨重启幂等已验证；真实账户待实盘 |
+| GM | `POST /api/v1/gm/trade/order` | `/trade/cancel` | 同上 | `gmtrade` sidecar；模拟账户限价/市价、成交、撤单、幂等、立即拒单识别已验证；卖出受 T+1 限制 |
+| tdxquant | `POST /api/v1/tdxquant/trade/order` | `/trade/cancel` | 同上 | `tqcenter` 直连；模拟账户买卖、限价/市价/涨跌停价、`notify=1`、撤单、跨重启幂等已验证；真实账户待实盘 |
 
 ### 幂等与交易状态
 
@@ -74,13 +74,13 @@
 |---|---|
 | xtquant 数据/交易代码 | 已完成接入；本机没有 xtquant SDK，未真实联调 |
 | GM `gm.api` 行情 | 真实接口可用 |
-| GM `gmtrade` 模拟账户 | 限价/市价、成交、持仓、撤单、幂等已验证；卖出受 T+1 限制 |
+| GM `gmtrade` 模拟账户 | 限价/市价、成交、持仓、撤单、幂等、立即拒单识别已验证；卖出受 T+1 限制 |
 | GM 实盘 | 未切换、未下实盘单 |
 | TDX tqcenter 登录与资产 | 模拟账户 `logged_in=true`，资产可查 |
 | TDX 模拟交易 | 登录、买入/卖出、限价/市价/涨跌停价、`notify=1` 人工确认、撤单已验证；市价成交状态查询有延迟 |
 | TDX 实盘 | 券商已开放 TQ 自动下单权限，尚未做实盘小额验证 |
 | TDX 分钟数据 | 当前终端无分钟数据/Level2，`1m/5m/15m/30m/1h` 为空 |
-| 自动化测试 | `84 passed, 5 skipped` |
+| 自动化测试 | `87 passed, 5 skipped` |
 
 > TDX 收盘后提交委托会返回 `(-7353) 服务未就绪(OMS)`，这是终端 OMS 时段限制，不是网关异常。真实 `accepted → 撤单` 闭环需在交易时段复验。
 
@@ -230,6 +230,7 @@ copy .env.example .env
 | `JINGNI_TDX_TIMEOUT` | 数据/交易调用超时，默认 `30` 秒 |
 | `JINGNI_TDX_CANCEL_RECONCILE_TIMEOUT` | 撤单对账超时，默认 `30` 秒 |
 | `JINGNI_TDX_POLL_INTERVAL` | 委托状态轮询间隔，默认 `1.0` 秒 |
+| `JINGNI_TDX_PENDING_IDEMPOTENCY_TTL` | `pending_confirm` 人工确认幂等窗口，默认 `1800` 秒 |
 | `JINGNI_TDX_IDEMPOTENCY_DB` | 默认 `data/tdx_idempotency.sqlite3` |
 
 `.env` 已在 `.gitignore` 中；不要提交 Token、API Key、账号。
@@ -441,7 +442,7 @@ ws://127.0.0.1:8000/ws?client_id=demo&api_key=<JINGNI_API_KEY>
 当前基线：
 
 ```text
-84 passed, 5 skipped
+87 passed, 5 skipped
 ```
 
 按模块：
@@ -463,7 +464,7 @@ ws://127.0.0.1:8000/ws?client_id=demo&api_key=<JINGNI_API_KEY>
 3. **GM sidecar 单账户**：当前只登录一个 `JINGNI_GM_ACCOUNT_ID`；多账户需要改成按账户路由。
 4. **TDX 分钟数据缺失**：依赖终端盘后数据/Level2，网关无法凭空补齐。
 5. **TDX 收盘后 OMS 不可用**：真实委托验收需交易时段。
-6. **TDX `notify=1` 需人工确认**：已验证 `pending_confirm` → 客户端确认 → `open` → 撤单；pending 缓存 TTL 为 10 分钟，超时后同 `client_order_id` 重放会再次发送确认信号，需延长或持久化 pending 状态。
+6. **TDX `notify=1` 需人工确认**：已验证 `pending_confirm` → 客户端确认 → `open` → 撤单；pending 幂等窗口独立配置为 30 分钟，避免超时重放重复发送确认信号。
 7. **TDX 委托状态查询有延迟**：市价卖出成交后约 20 秒内查询仍可能显示 `open`，应以持仓和资金变化对账，不能只看委托状态。
 8. **未推送远端、未改写 Git 历史**：旧凭据清理需单独授权。
 

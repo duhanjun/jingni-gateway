@@ -596,13 +596,45 @@ GET /api/v1/gm/trade/asset
   - 下单时间约 `14:00:41`，用户确认时间约 `14:29:22`
   - 在 `14:31:10` 用同一 `client_order_id` 重放，返回 `idempotent_replay=false`，再次发送 `pending_confirm` 信号
   - 原因是 pending 结果只在内存缓存 10 分钟，人工确认可能晚于 TTL
-  - 本次重放没有生成重复真实委托；但这是重复确认信号风险，建议把 pending 状态持久化到确认/拒绝为止，或延长 TTL
+  - 本次重放没有生成重复真实委托；但这是重复确认信号风险，建议把 pending 状态持久化到确认/拒绝为止，或延长 TTL（已在第十五节修复）
 
 ### 14.5 收口状态
 
 - TDX 当前无 `status=1` 的未完成委托
 - TDX 持仓为 0（`000001.SZ` 已卖出），`cash=1000147.22`
 - GM 仍持有 `SHSE.601398` 100 股（当日买入，受 T+1 限制）；另有此前 `600000` 100 股限价买单 `status=1`，非本轮测试单
+
+---
+
+## 十五、2026-11-23 修复与盘中验证
+
+### 15.1 TDX pending 幂等 TTL
+
+- `core/tdx_trade.py` 新增 pending 专用 TTL `_pending_order_cache_ttl`；pending 结果命中时使用该窗口，普通 accepted 仍用 600 秒。
+- `config.py` 新增 `JINGNI_TDX_PENDING_IDEMPOTENCY_TTL`，默认 `1800` 秒；`.env.example` 和 README 已补。
+- SQLite 持久化读取也按结果状态选择 TTL，不再统一用 600 秒。
+- 新增 3 个单测：
+  - pending 幂等窗口长于 accepted；
+  - pending 内存缓存跨过 accepted TTL 后仍可重放；
+  - pending SQLite 持久化跨服务实例仍可重放。
+- `tests/test_tdx_trade.py`：`13 passed`。
+
+### 15.2 GM 立即拒单识别
+
+- `core/gm_trade.py` 在下单后做一次短延迟 `get_orders()` 查询：
+  - 若目标委托 `status=8`（已拒绝），返回 `state=rejected`、`success=false`，并带 `reject_reason`；
+  - 若仍为 `status=1`，保持 `accepted`，并回填 `status`。
+- 实测 `SHSE.510300` 卖出 100 股（当日买入，T+1）：返回 `success=false`、`state=rejected`、`status=8`、原因 `[GMBROKER] 仓位不足: 委托冻结(100) > 可用持仓(0)`。
+- 对照：`SHSE.601398` 限价买入 100 股 `9.00` 返回 `accepted`、`status=1`，按 `cl_ord_id` 撤单后 `status=5`。
+- 新增 1 个单测覆盖立即拒单映射；`tests/test_gm_trade.py` 通过。
+
+### 15.3 本轮收口
+
+- TDX：无未完成委托，持仓 0，`cash=1000147.22`；网关重启后 health `healthy`、`logged_in=true`。
+- GM：新增 `SHSE.510300` 100 股持仓（当日买入，T+1 拒绝卖出），原有 `SHSE.601398` 100 股持仓；两笔均为模拟账户。
+- GM 旧 `600000` 100 股限价买单仍为 `status=1`，未操作。
+- 全量自动化：`87 passed, 5 skipped, 1 warning`；5 个 skip 均为 QMT/xtquant SDK 缺失。
+
 
 
 

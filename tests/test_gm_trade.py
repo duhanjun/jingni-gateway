@@ -57,6 +57,25 @@ def test_place_order_maps_gm_constants():
     assert kwargs["account"] == "gm-account"
 
 
+def test_place_order_maps_immediate_rejection():
+    service, api = _service()
+    api.order_result = [{"order_id": "gm-rejected-1"}]
+    api.get_orders = lambda **kwargs: [{
+        "order_id": "gm-rejected-1",
+        "status": 8,
+        "ord_rej_reason_detail": "[GMBROKER] 仓位不足: 委托冻结(100) > 可用持仓(0)",
+    }]
+
+    result = asyncio.run(service.place_order(
+        "SHSE.510300", 100, 0, 1, 0.0, position_effect=1
+    ))
+
+    assert result["success"] is False
+    assert result["state"] == "rejected"
+    assert result["status"] == 8
+    assert "仓位不足" in result["reject_reason"]
+
+
 def test_place_order_idempotent():
     service, api = _service()
 

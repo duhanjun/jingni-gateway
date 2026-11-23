@@ -119,6 +119,7 @@ class TDXConfig:
         cancel_reconcile_timeout: Optional[int] = None,
         poll_interval: Optional[float] = None,
         idempotency_db: Optional[str] = None,
+        pending_idempotency_ttl: Optional[int] = None,
     ):
         self.install_path = install_path or os.getenv(
             "JINGNI_TDX_HOME", r"C:\new_tdx_mock"
@@ -153,6 +154,12 @@ class TDXConfig:
         self.idempotency_db = (
             idempotency_db if idempotency_db is not None
             else os.getenv("JINGNI_TDX_IDEMPOTENCY_DB", default_idem_db)
+        )
+        # pending_confirm 可能等待人工确认超过普通 accepted 的 10 分钟 TTL；
+        # 单独放宽，避免同 client_order_id 重放时再次向客户端发送确认信号。
+        self.pending_idempotency_ttl = int(
+            pending_idempotency_ttl if pending_idempotency_ttl is not None
+            else os.getenv("JINGNI_TDX_PENDING_IDEMPOTENCY_TTL", "1800")
         )
 
 
