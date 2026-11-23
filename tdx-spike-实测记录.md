@@ -631,7 +631,7 @@ GET /api/v1/gm/trade/asset
   - 若目标委托 `status=8`（已拒绝），返回 `state=rejected`、`success=false`，并带 `reject_reason`；
   - 若仍为 `status=1`，保持 `accepted`，并回填 `status`。
 - 实测 `SHSE.510300` 卖出 100 股（当日买入，T+1）：返回 `success=false`、`state=rejected`、`status=8`、原因 `[GMBROKER] 仓位不足: 委托冻结(100) > 可用持仓(0)`。
-- 对照：`SHSE.601398` 限价买入 100 股 `9.00` 返回 `accepted`、`status=1`，按 `cl_ord_id` 撤单后 `status=5`。
+- 对照：`SHSE.601398` 限价买入 100 股 `9.00` 返回 `accepted`、`status=1`，按 GM 返回的真实 `cl_ord_id` 撤单后 `status=5`。
 - 新增 1 个单测覆盖立即拒单映射；`tests/test_gm_trade.py` 通过。
 
 ### 15.4 本轮收口
@@ -640,6 +640,52 @@ GET /api/v1/gm/trade/asset
 - GM：新增 `SHSE.510300` 100 股持仓（当日买入，T+1 拒绝卖出），原有 `SHSE.601398` 100 股持仓；两笔均为模拟账户。
 - GM 旧 `600000` 100 股限价买单仍为 `status=1`，未操作。
 - 全量自动化：`87 passed, 5 skipped, 1 warning`；5 个 skip 均为 QMT/xtquant SDK 缺失。
+
+---
+
+## 十六、2026-11-23 收盘后回归：GM 撤单假成功修复
+
+### 16.1 TDX 收盘后下单/撤单/幂等
+
+- `15:03:21` 提交 `600000.SH` 买入 100 股限价 `10.20`，`notify=0`：返回 `accepted`，委托号 `315396`
+- 撤单：`cancel_state=confirmed`，`status=0`；`cash` 保持 `1000147.22`
+- 同一 `client_order_id` 立即重放：返回 `idempotent_replay=true`、同一委托号 `315396`，未生成新委托
+- 说明：TDX 收盘后本次仍可提交模拟委托并撤单；`notify=1` 的 30 分钟窗口仍由单测覆盖，未在本次做真实 10 分钟以上重放
+
+### 16.2 GM 卖出拒单与撤单发现
+
+- `15:04:01` 卖出 `SHSE.510300` 100 股市价，`position_effect=2`：柜台拒绝，委托 `0f75f5a9-e70c-11f1-83b1-00163e022aa6`，`status=8`
+- API 返回 `success=false`、`state=rejected`，原因 `[GMBROKER] 仓位不足: 委托冻结(100) > 可用持仓(0)`
+- 该结果符合 T+1 限制，不是新的卖出缺陷；当日买入的 `601398`、`510300` 仍不可卖
+- 回归时发现：用本地 `client_order_id` 调 GM 撤单，接口曾返回 `cancelled=true`，但目标委托仍为 `status=1`，属于撤单假成功
+- 根因：`gmtrade.order_cancel` 只接受券商 `cl_ord_id`，本地 `client_order_id` 并不是券商 `cl_ord_id`；`order_cancel` 返回 true 也不代表委托已进入终态
+
+### 16.3 修复内容
+
+- `core/gm_trade.py` 撤单前先查询委托，按 `order_id` 或真实 `cl_ord_id` 解析目标委托；找不到返回 `ORDER_NOT_FOUND`，不再盲目发送撤单请求
+- 撤单后轮询委托状态，只有 `status=5`（已撤）或 `status=12`（已过期）才返回 `success=true`、`cancel_state=confirmed`
+- 下单返回中补充 GM 实际 `cl_ord_id`，调用方可直接用于撤单
+- 新增 2 个单测：本地 `client_order_id` 不存在的假成功、`order_cancel` 返回 true 但委托仍为 `status=1` 的未确认撤单
+- `tests/test_gm_trade.py`：`7 passed`
+- 全量自动化：`89 passed, 5 skipped, 1 warning`
+
+### 16.4 修复后实盘模拟回归
+
+- 提交 `SHSE.601398` 买入 100 股限价 `9.00`：`accepted`，返回 `order_id`、真实 `cl_ord_id`
+- 用本地 `client_order_id` 撤单：返回 `success=false`、`ORDER_NOT_FOUND`，原委托保持 `status=1`，没有发生误撤或假成功
+- 用真实 `order_id` 撤单：`confirmed`，`status=5`
+- 用真实 `cl_ord_id` 撤单另一笔同价委托：`confirmed`，`status=5`
+- 网关重启后 GM health `healthy`；GM 当前持仓仍为 `601398` 100 股、`510300` 100 股，均为当日买入
+- GM 原有 `600000` 100 股买单在 `15:00` 后变为 `status=12`（已过期），不再挂单
+- TDX 当前无未完成委托，持仓 0；`asset=1000147.22`
+
+### 16.5 TDX 收盘后 cash 字段异常（待开盘核对）
+
+- `15:03` 首笔收盘后测试单前后，health `cash` 从 `1000147.22` 变为 `999126.91`，差额 `1020.31` 与 100 股 `10.20` 买单金额接近
+- 但该委托 `315396` 显示 `status=0`、`filled_volume=0`，持仓仍为 0；`TotalFreeze=0.00`
+- 随后再下 `315711` 同价买单并撤单，`cash` 保持 `999126.91`，未继续减少；`asset` 保持 `1000147.22`
+- `asset` 与 `cash` 差额 `1020.31` 仍存在，当前无法仅凭接口判断是终端日终结算字段变化还是残留冻结
+- 已记录，不在本轮猜测修复；下一交易日开盘前用 TDX 客户端资金页和 `get_cash` 再对账
 
 
 

@@ -33,15 +33,17 @@
 | Provider | 下单 | 撤单 | 资金/持仓/委托 | 说明 |
 |---|---|---|---|---|
 | xtquant | `POST /api/v1/xtquant/trade/order` | `/trade/cancel` | `/trade/asset`、`/trade/positions`、`/trade/orders` | 代码已接入；本机未安装 xtquant SDK，尚未真实联调 |
-| GM | `POST /api/v1/gm/trade/order` | `/trade/cancel` | 同上 | `gmtrade` sidecar；模拟账户限价/市价、成交、撤单、幂等、立即拒单识别已验证；卖出受 T+1 限制 |
+| GM | `POST /api/v1/gm/trade/order` | `/trade/cancel` | 同上 | `gmtrade` sidecar；模拟账户限价/市价、成交、按真实 `order_id`/`cl_ord_id` 撤单、幂等、立即拒单识别已验证；卖出受 T+1 限制 |
 | tdxquant | `POST /api/v1/tdxquant/trade/order` | `/trade/cancel` | 同上 | `tqcenter` 直连；模拟账户买卖、限价/市价/涨跌停价、`notify=1`、撤单、跨重启幂等已验证；真实账户待实盘 |
 
 ### 幂等与交易状态
 
 - xtquant / GM：`client_order_id` 进程内幂等缓存
+- GM 撤单必须使用返回的 `order_id` 或 GM 实际 `cl_ord_id`；本地 `client_order_id` 不参与券商撤单
 - TDX：`client_order_id` 进程内缓存 + SQLite 持久化，网关重启后同 key 返回 `idempotent_replay=true`
 - TDX `notify=1` 如实返回 `pending_confirm`，不会伪装成已成交；需要在通达信客户端人工确认
 - TDX 撤单做状态对账，处理“返回 `Value=0` 但异步生效”的情况
+- GM 撤单同样做状态对账，只有委托进入 `status=5`（已撤）或 `status=12`（已过期）才返回成功
 
 ### WebSocket
 
@@ -74,15 +76,15 @@
 |---|---|
 | xtquant 数据/交易代码 | 已完成接入；本机没有 xtquant SDK，未真实联调 |
 | GM `gm.api` 行情 | 真实接口可用 |
-| GM `gmtrade` 模拟账户 | 限价/市价、成交、持仓、撤单、幂等、立即拒单识别已验证；卖出受 T+1 限制 |
+| GM `gmtrade` 模拟账户 | 限价/市价、成交、持仓、按真实 `order_id`/`cl_ord_id` 撤单、幂等、立即拒单识别已验证；卖出受 T+1 限制 |
 | GM 实盘 | 未切换、未下实盘单 |
 | TDX tqcenter 登录与资产 | 模拟账户 `logged_in=true`，资产可查 |
 | TDX 模拟交易 | 登录、买入/卖出、限价/市价/涨跌停价、`notify=1` 人工确认、撤单已验证；市价成交状态查询有延迟 |
 | TDX 实盘 | 券商已开放 TQ 自动下单权限，尚未做实盘小额验证 |
 | TDX 分钟数据 | 当前终端无分钟数据/Level2，`1m/5m/15m/30m/1h` 为空 |
-| 自动化测试 | `87 passed, 5 skipped` |
+| 自动化测试 | `89 passed, 5 skipped` |
 
-> TDX 收盘后提交委托会返回 `(-7353) 服务未就绪(OMS)`，这是终端 OMS 时段限制，不是网关异常。真实 `accepted → 撤单` 闭环需在交易时段复验。
+> TDX 收盘后能否提交委托取决于终端 OMS；本次 15:03 实测限价买入 `accepted` 并可撤单，若返回 `-7353` 属于终端时段限制，不是网关异常。真实 `accepted → 撤单` 闭环仍建议在连续竞价时段复验。
 
 ---
 
@@ -302,7 +304,7 @@ X-API-Key: <JINGNI_API_KEY>
 | GET | `/api/v1/gm/rpc/methods` | 可用方法 |
 | GET | `/api/v1/gm/rpc/whitelist` | 白名单 |
 | POST | `/api/v1/gm/trade/order` | 类型化按量下单 |
-| POST | `/api/v1/gm/trade/cancel` | 撤单，支持 `order_id` 或 `cl_ord_id` |
+| POST | `/api/v1/gm/trade/cancel` | 撤单，支持 `order_id` 或 GM 实际 `cl_ord_id`；本地 `client_order_id` 仅用于幂等 |
 | GET | `/api/v1/gm/trade/orders` | 委托查询 |
 | GET | `/api/v1/gm/trade/asset` | 资金查询 |
 | GET | `/api/v1/gm/trade/positions` | 持仓查询 |
@@ -442,7 +444,7 @@ ws://127.0.0.1:8000/ws?client_id=demo&api_key=<JINGNI_API_KEY>
 当前基线：
 
 ```text
-87 passed, 5 skipped
+89 passed, 5 skipped
 ```
 
 按模块：

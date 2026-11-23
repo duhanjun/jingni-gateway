@@ -12,8 +12,9 @@ from core.gm_trade import GMNotLoggedInError, GMTradeService
 class FakeGM:
     def __init__(self):
         self.calls = []
-        self.order_result = [{"order_id": "gm-order-1"}]
+        self.order_result = [{"order_id": "gm-order-1", "cl_ord_id": "gm-clord-1"}]
         self.cancel_result = True
+        self.order_status = 2
 
     def order_volume(self, **kwargs):
         self.calls.append(("order_volume", kwargs))
@@ -21,10 +22,15 @@ class FakeGM:
 
     def order_cancel(self, **kwargs):
         self.calls.append(("order_cancel", kwargs))
+        self.order_status = 5
         return self.cancel_result
 
     def get_orders(self, **kwargs):
-        return [{"order_id": "gm-order-1", "status": 2}]
+        return [{
+            "order_id": "gm-order-1",
+            "cl_ord_id": "gm-clord-1",
+            "status": self.order_status,
+        }]
 
     def get_cash(self, **kwargs):
         return {"cash": 1000.0, "total_asset": 1000.0}
@@ -104,8 +110,32 @@ def test_cancel_and_queries():
     assert asset["cash"] == 1000.0
     assert positions[0]["symbol"] == "SHSE.600000"
     cancel_kwargs = [c[1] for c in api.calls if c[0] == "order_cancel"][0]
-    assert cancel_kwargs["cl_ord_id"] == "gm-order-1"
+    assert cancel_kwargs["cl_ord_id"] == "gm-clord-1"
     assert cancel_kwargs["account_id"] == "gm-account"
+
+
+def test_cancel_unknown_client_id_does_not_report_success():
+    service, api = _service()
+
+    result = asyncio.run(service.cancel_order("unknown-local-key", cl_ord_id="unknown-local-key"))
+
+    assert result["success"] is False
+    assert result["cancel_state"] == "failed"
+    assert result["error"] == "ORDER_NOT_FOUND"
+    assert not [c for c in api.calls if c[0] == "order_cancel"]
+
+
+def test_cancel_requires_terminal_order_status():
+    service, api = _service()
+    api.order_cancel = lambda **kwargs: True
+    api.order_status = 1
+
+    result = asyncio.run(service.cancel_order("gm-order-1"))
+
+    assert result["success"] is False
+    assert result["cancel_state"] == "failed"
+    assert result["status"] == 1
+    assert result["error"] == "CANCEL_NOT_CONFIRMED"
 
 
 def test_empty_cash_raises_not_logged_in():

@@ -113,6 +113,7 @@ class GMTradeService:
 
         canonical = {
             "order_id": str(order_id) if order_id is not None else None,
+            "cl_ord_id": str(order.get("cl_ord_id")) if isinstance(order, dict) and order.get("cl_ord_id") else None,
             "symbol": symbol,
             "side": "buy" if side == 0 else "sell",
             "volume": int(volume),
@@ -159,27 +160,75 @@ class GMTradeService:
         return None
 
     async def cancel_order(self, order_id: str, cl_ord_id: Optional[str] = None) -> Dict[str, Any]:
-        # gm.api / gmtrade.order_cancel 接收单个 dict 或 list[dict]，键是 cl_ord_id/account_id。
-        # API 允许调用方传 order_id；gmtrade 需要 cl_ord_id，先按委托列表解析一次。
-        target_cl_ord_id = cl_ord_id or str(order_id)
-        if not cl_ord_id:
-            try:
-                for order in await self.query_orders():
-                    if isinstance(order, dict) and str(order.get("order_id")) == str(order_id):
-                        target_cl_ord_id = str(order.get("cl_ord_id") or order_id)
-                        break
-            except Exception as exc:
-                logger.warning("解析 GM order_id -> cl_ord_id 失败，按原值撤单: %s", exc)
+        # gmtrade.order_cancel 只接受 cl_ord_id。先按委托查询把 order_id /
+        # 实际 cl_ord_id 统一解析成目标委托；不能把本地幂等键直接当券商
+        # cl_ord_id 发送，否则 GM 可能返回“撤单成功”但委托仍挂着。
+        target_order = None
+        try:
+            orders = await self.query_orders()
+        except Exception as exc:
+            logger.warning("撤单前查询 GM 委托失败: %s", exc)
+            orders = []
+
+        for order in orders:
+            if not isinstance(order, dict):
+                continue
+            if cl_ord_id:
+                if str(order.get("cl_ord_id")) == str(cl_ord_id):
+                    target_order = order
+                    break
+            elif str(order.get("order_id")) == str(order_id) or str(order.get("cl_ord_id")) == str(order_id):
+                target_order = order
+                break
+
+        if target_order is None:
+            audit_logger.info("cancel_order target_not_found order_id=%s cl_ord_id=%s", order_id, cl_ord_id)
+            return {
+                "success": False,
+                "cancel_state": "failed",
+                "order_id": str(order_id),
+                "cl_ord_id": str(cl_ord_id) if cl_ord_id else None,
+                "error": "ORDER_NOT_FOUND",
+                "raw": None,
+            }
+
+        target_order_id = str(target_order.get("order_id") or order_id)
+        target_cl_ord_id = str(target_order.get("cl_ord_id") or target_order_id)
         kwargs = {"cl_ord_id": target_cl_ord_id}
         if self._account:
             kwargs["account_id"] = self._account
         raw = await self._call("order_cancel", kwargs)
-        success = raw is not False and raw is not None
-        audit_logger.info("cancel_order order_id=%s success=%s", order_id, success)
+
+        # order_cancel 返回 None/True 只代表请求已提交；必须看到终态才算成功。
+        status = None
+        for _ in range(4):
+            await asyncio.sleep(0.3)
+            try:
+                orders_after = await self.query_orders()
+            except Exception as exc:
+                logger.warning("撤单后查询 GM 委托失败: %s", exc)
+                continue
+            for order in orders_after:
+                if isinstance(order, dict) and str(order.get("order_id")) == target_order_id:
+                    status = order.get("status")
+                    break
+            if status in (5, 12):
+                break
+
+        confirmed = status in (5, 12)
+        request_success = raw is not False and raw is not None
+        success = request_success and confirmed
+        audit_logger.info(
+            "cancel_order order_id=%s cl_ord_id=%s request_success=%s status=%s confirmed=%s",
+            target_order_id, target_cl_ord_id, request_success, status, confirmed,
+        )
         return {
             "success": success,
-            "cancel_state": "confirmed" if success else "failed",
-            "order_id": str(order_id),
+            "cancel_state": "confirmed" if confirmed else "failed",
+            "order_id": target_order_id,
+            "cl_ord_id": target_cl_ord_id,
+            "status": status,
+            "error": None if confirmed else "CANCEL_NOT_CONFIRMED",
             "raw": raw,
         }
 
