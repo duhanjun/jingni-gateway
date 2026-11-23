@@ -619,7 +619,13 @@ GET /api/v1/gm/trade/asset
   - pending SQLite 持久化跨服务实例仍可重放。
 - `tests/test_tdx_trade.py`：`13 passed`。
 
-### 15.2 GM 立即拒单识别
+### 15.2 重启后 TDX 实盘模拟回归
+
+- 网关重启加载新代码后，`600000.SH` 买入 100 股限价 `10.20`：`accepted`，委托号 `298272`
+- 撤单：`cancel_state=confirmed`，状态 `0`；`cash` 保持 `1000147.22`
+- TDX health：`healthy`、`logged_in=true`
+
+### 15.3 GM 立即拒单识别
 
 - `core/gm_trade.py` 在下单后做一次短延迟 `get_orders()` 查询：
   - 若目标委托 `status=8`（已拒绝），返回 `state=rejected`、`success=false`，并带 `reject_reason`；
@@ -628,7 +634,7 @@ GET /api/v1/gm/trade/asset
 - 对照：`SHSE.601398` 限价买入 100 股 `9.00` 返回 `accepted`、`status=1`，按 `cl_ord_id` 撤单后 `status=5`。
 - 新增 1 个单测覆盖立即拒单映射；`tests/test_gm_trade.py` 通过。
 
-### 15.3 本轮收口
+### 15.4 本轮收口
 
 - TDX：无未完成委托，持仓 0，`cash=1000147.22`；网关重启后 health `healthy`、`logged_in=true`。
 - GM：新增 `SHSE.510300` 100 股持仓（当日买入，T+1 拒绝卖出），原有 `SHSE.601398` 100 股持仓；两笔均为模拟账户。
