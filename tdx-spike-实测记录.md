@@ -563,5 +563,47 @@ GET /api/v1/gm/trade/asset
 - 另有一笔此前已存在的 `SHSE.600000` 100 股限价买单（价格 `10.65`）仍为 `status=1`，`order_frozen=1070.00`；非本次测试下单，未做撤单操作
 - TDX 当前 `logged_in=false`，`query_stock_asset` 返回空资产；TDX 卖出/订单类型/`notify=1` 本轮未能继续
 
+---
+
+## 十四、2026-11-23 盘中 TDX 补测
+
+### 14.1 账户与持仓
+
+- 用户登录 TDX 模拟账户后：`logged_in=true`、`account_handle=1`、`cash=998908.59`、`status=healthy`
+- 持仓：`000001.SZ` 100 股，`available_volume=100`，成本 `10.914`
+
+### 14.2 卖出与撤单
+
+- 限价卖出 `000001.SZ` 100 股 @ `12.60`：`accepted`，`order_id=259539`，状态 `1`
+- 下单后持仓 `available_volume` 变为 `0`（卖出冻结）
+- 撤单：`cancel_state=confirmed`，状态 `0`；`available_volume` 恢复 `100`
+- 市价卖出 `000001.SZ` 100 股：`accepted`，`order_id=260019`
+- 约 20 秒后委托变为 `status=3`（filled），持仓变为 0；`cash` 从 `998908.59` 增至 `1000147.22`
+- 成交后一段时间内 `query_stock_orders` 仍可能显示 `status=1`、`filled_volume=0`；以持仓和资金对账为准
+
+### 14.3 价格类型矩阵
+
+- `600000.SH` 买入 100 股 `price_type=3`（跌停/笼子下限）：`accepted`，`order_id=261024`，委托价 `10.530`，状态 `1`；撤单后 `status=0`
+- `600000.SH` 买入 100 股 `price_type=2`（涨停/笼子上限）：`accepted`，`order_id=286164`，委托价 `10.920`，状态 `1`；未成交，撤单后 `status=0`
+- 观察：TDX 的 `price_type=2/3` 实际取的是**价格笼子上/下限**，不一定是 ±10% 涨跌停价；委托价由客户端计算
+- `price_type=0` 限价、`price_type=1` 市价均已验证；市价卖出可成交
+
+### 14.4 `notify=1` 人工确认
+
+- `600000.SH` 买入 100 股限价 `10.50`、`notify=1`：返回 `pending_confirm`，无 `order_id`
+- 用户在通达信客户端确认后，生成 `order_id=285234`，状态 `1`（open）；随后按 `order_id` 撤单，`cancel_state=confirmed`，状态 `0`
+- 发现 pending 缓存 TTL 问题：
+  - 下单时间约 `14:00:41`，用户确认时间约 `14:29:22`
+  - 在 `14:31:10` 用同一 `client_order_id` 重放，返回 `idempotent_replay=false`，再次发送 `pending_confirm` 信号
+  - 原因是 pending 结果只在内存缓存 10 分钟，人工确认可能晚于 TTL
+  - 本次重放没有生成重复真实委托；但这是重复确认信号风险，建议把 pending 状态持久化到确认/拒绝为止，或延长 TTL
+
+### 14.5 收口状态
+
+- TDX 当前无 `status=1` 的未完成委托
+- TDX 持仓为 0（`000001.SZ` 已卖出），`cash=1000147.22`
+- GM 仍持有 `SHSE.601398` 100 股（当日买入，受 T+1 限制）；另有此前 `600000` 100 股限价买单 `status=1`，非本轮测试单
+
+
 
 
