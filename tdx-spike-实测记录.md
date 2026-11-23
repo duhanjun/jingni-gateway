@@ -534,4 +534,34 @@ GET /api/v1/gm/trade/asset
 - TDX 分钟线 `1m/5m/15m/30m/1h` 仍为空，`get_kzz_info` 仍为空；属于终端数据/Level2 权限限制。
 - GM `gmtrade.start()`：hosted 端点 `-1`，本地终端端点 `1020`；事件回调未打通，轮询路径正常。
 
+---
+
+## 十三、2026-11-23 盘中 GM 补测
+
+### 13.1 成交与持仓
+
+- `SHSE.601398` 100 股市价买入：`accepted`，随后 `status=3`（已成交），成交价 `9.17`，成交金额 `917.00`，佣金 `5.00`
+- 持仓查询：`SHSE.601398` 100 股，`available=100`、`available_today=100`、`vwap=9.17`
+- 账户：`nav=99991.00`、`pnl=-9.00`、`order_frozen=1070.00`、`available=98007.99`
+- 同 `client_order_id` 重放：`idempotent_replay=true`，未重复成交
+
+### 13.2 撤单
+
+- `SHSE.601398` 100 股限价买入 `9.00`：`accepted`，`status=1`
+- 按 `cl_ord_id` 撤单：`cancel_state=confirmed`，委托 `status=5`
+- 撤单后没有新增冻结资金；`order_frozen` 仍为既有委托的 `1070.00`
+
+### 13.3 卖出/平仓限制
+
+- 对当日买入的 100 股发起市价卖出，分别使用 `position_effect=3`（平今）和 `position_effect=2`（平仓）
+- 两次均被柜台拒绝：`status=8`，`ord_rej_reason_detail="[GMBROKER] 仓位不足: 委托冻结(100) > 可用持仓(0)"`
+- 持仓查询仍显示 `available=100`、`available_today=100`，但 GM 模拟柜台按 T+1 计算可卖持仓为 0
+- 结论：**当日买入的 GM 模拟持仓不能当日卖出**；卖出/平仓需下一交易日用隔日持仓验证
+
+### 13.4 现场状态
+
+- 另有一笔此前已存在的 `SHSE.600000` 100 股限价买单（价格 `10.65`）仍为 `status=1`，`order_frozen=1070.00`；非本次测试下单，未做撤单操作
+- TDX 当前 `logged_in=false`，`query_stock_asset` 返回空资产；TDX 卖出/订单类型/`notify=1` 本轮未能继续
+
+
 
