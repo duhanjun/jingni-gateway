@@ -11,6 +11,7 @@ from .base import BaseProvider, serialize_data, SymbolConverter
 from typing import Dict, Any, List
 import logging
 
+from core.sdk_compat import wrap_xtdata
 from core.whitelist import RPC_WHITELIST
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,8 @@ class XtQuantProvider(BaseProvider):
         """
         try:
             from xtquant import xtdata
-            self._xtdata = xtdata
+            compat_enabled = bool(getattr(self._config, "XT_SDK_COMPAT", True))
+            self._xtdata = wrap_xtdata(xtdata, enabled=compat_enabled)
             self._xtdata_available = True
             logger.info("xtquant.xtdata 模块加载成功")
         except ImportError as e:
@@ -164,64 +166,21 @@ class XtQuantProvider(BaseProvider):
     def create_trader(self, account: str, account_type: str = "STOCK"):
         """
         创建交易实例。
-        
+
+        统一委托给 ``core.rpc.create_xttrader_instance``，避免在 provider 内
+        保留第二套构造逻辑（历史实现用三参 XtQuantTrader，且 session_id 取
+        ``int(account)``，非纯数字账户会直接失败）。
+
         参数：
             account: 账户 ID
             account_type: 账户类型，默认为 "STOCK"
-        
+
         返回：
             包含创建结果的字典
         """
-        if not self._xttrader_available:
-            return {"success": False, "error": "xttrader 模块不可用"}
+        from core.rpc import create_xttrader_instance
 
-        try:
-            from xtquant import xttrader
-            from xtquant.xttrader import XtQuantTraderCallback
-
-            callback = XtQuantTraderCallback()
-            mini_qmt_path = getattr(self._config, 'MINI_QMT_PATH', None)
-
-            if not mini_qmt_path:
-                return {"success": False, "error": "MINI_QMT_PATH 未配置"}
-
-            trader = xttrader.XtQuantTrader(mini_qmt_path, int(account), callback)
-            self._trader_instance = trader
-            return {"success": True, "data": "交易实例创建成功"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def start_trader(self):
-        """
-        启动交易实例。
-        
-        返回：
-            包含启动结果的字典
-        """
-        if not self._trader_instance:
-            return {"success": False, "error": "交易实例未创建"}
-
-        try:
-            result = self._trader_instance.start()
-            return {"success": True, "data": result}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def connect_trader(self):
-        """
-        连接交易服务器。
-        
-        返回：
-            包含连接结果的字典
-        """
-        if not self._trader_instance:
-            return {"success": False, "error": "交易实例未创建"}
-
-        try:
-            result = self._trader_instance.connect()
-            return {"success": True, "data": result}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        return create_xttrader_instance(account, account_type=account_type)
 
     @staticmethod
     def convert_symbol_to_xtquant(symbol: str) -> str:

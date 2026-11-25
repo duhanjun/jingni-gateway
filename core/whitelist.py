@@ -13,6 +13,10 @@ RPC 函数白名单模块。
 安全说明：
 白名单是一种安全措施，用于防止未经授权的函数调用。
 只添加可以安全暴露给 RPC 接口的函数。
+
+注意：本白名单是“声明边界”，不等于对外承诺的 supported 清单。
+实际支持状态（含 GM sidecar 子集、TDX 类型化交易、运行时缺失）由
+``core/capabilities.py`` 收敛后，通过 ``/rpc/capabilities`` 对外暴露。
 """
 
 # 明确禁止通过 RPC 暴露的阻塞函数：
@@ -24,6 +28,8 @@ BLOCKED_RPC_FUNCTIONS = {
     # 交易写操作只允许走类型化 /trade 端点
     ("xttrader", "order_stock"),
     ("xttrader", "cancel_order_stock"),
+    # 可向服务器任意路径写文件，禁止走通用 RPC
+    ("xttrader", "export_data"),
     # GM 交易写操作只允许走类型化 /trade 端点
     ("gmtrade", "order_volume"),
     ("gmtrade", "order_value"),
@@ -71,7 +77,7 @@ RPC_WHITELIST = {
         "query_credit_subjects", "query_credit_slo_code",
         "query_new_purchase_limit", "query_ipo_data",
         "query_account_infos", "query_com_fund", "query_com_position",
-        "export_data", "query_data",
+        "query_data",
         "query_bank_info", "query_bank_amount",
         "query_bank_transfer_stream", "query_secu_account",
         "smt_query_quoter", "smt_negotiate_order_async", "smt_query_compact",

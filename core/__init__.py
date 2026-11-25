@@ -8,10 +8,12 @@
 - get_module_reference: 模块引用获取器
 - is_function_whitelisted: 白名单检查器
 - RPC_WHITELIST: RPC 函数白名单
+- build_capability_snapshot / evaluate_rpc: 能力矩阵与支持状态
 """
 
 from .websocket import ConnectionManager, WebSocketCallbackHandler
 from .rpc import execute_rpc_call, get_module_reference, is_function_whitelisted
+from .capabilities import build_capability_snapshot, evaluate_rpc, resolve_module
 from .whitelist import RPC_WHITELIST
 
 __all__ = [
@@ -21,4 +23,7 @@ __all__ = [
     'get_module_reference',
     'is_function_whitelisted',
     'RPC_WHITELIST',
+    'build_capability_snapshot',
+    'evaluate_rpc',
+    'resolve_module',
 ]
