@@ -13,6 +13,7 @@ websockets==12.0
 # 数据处理
 pandas==2.1.4
 numpy==1.26.3
+scipy==1.13.1  # GM option_calculate_* 依赖；必须与 numpy<2.0 兼容
 
 # 环境配置
 python-dotenv==1.0.0
