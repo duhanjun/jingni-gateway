@@ -49,6 +49,8 @@ class FakeTq:
 
     def query_stock_orders(self, account_id):
         self.query_count += 1
+        if self.orders:
+            return list(self.orders)
         status = self.status_sequence[min(self.query_count - 1, len(self.status_sequence) - 1)]
         return [{"Wtbh": "227988", "Code": "600000.SH", "Status": status,
                  "WtVol": "100", "WtPrice": "10.130", "CjVol": "0",
@@ -195,6 +197,33 @@ def test_place_order_pending_confirm_is_idempotent(fake_env):
     assert first["state"] == "pending_confirm"
     assert second["idempotent_replay"] is True
     assert second["state"] == "pending_confirm"
+
+
+def test_pending_replay_reconciles_client_confirmed_order(fake_env):
+    provider, service, fake = fake_env
+    fake.order_result = {
+        "ErrorId": "0", "Msg": "已发送信号至客户端，待用户确认！", "Value": 1,
+    }
+    fake.orders = [{
+        "Wtbh": "323862", "Code": "600000.SH", "Status": 1,
+        "WtVol": "100", "WtPrice": "9.000", "CjVol": "0",
+        "CjPrice": "0.000", "BSFlag": 0, "Time": "",
+    }]
+
+    first = asyncio.run(service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id="notify-key-reconcile"
+    ))
+    second = asyncio.run(service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id="notify-key-reconcile"
+    ))
+
+    assert len(fake.order_calls) == 1
+    assert first["state"] == "pending_confirm"
+    assert second["idempotent_replay"] is True
+    assert second["pending_reconciled"] is True
+    assert second["state"] == "accepted"
+    assert second["order_id"] == "323862"
+    assert second["status"] == 1
 
 
 def test_pending_confirm_uses_longer_ttl_than_accepted(fake_env):

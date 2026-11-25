@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.executor import run_module_call
-from providers.tdx_provider import TdxError, TdxProvider
+from providers.tdx_provider import TdxConfigError, TdxError, TdxProvider
 
 logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("tdx.audit")
@@ -121,13 +121,18 @@ class TdxTradeService:
         if client_order_id:
             cached = self._get_cached_order(client_order_id)
             if cached is not None:
-                replay = dict(cached)
+                replay = await self._reconcile_replay(client_order_id, cached)
                 replay["idempotent_replay"] = True
                 audit_logger.info(
-                    "place_order replay client_order_id=%s order_id=%s",
-                    client_order_id, replay.get("order_id"),
+                    "place_order replay client_order_id=%s order_id=%s state=%s reconciled=%s",
+                    client_order_id, replay.get("order_id"), replay.get("state"),
+                    replay.get("pending_reconciled", False),
                 )
                 return replay
+
+        # 未登录时终端可能把 order_stock 的 0 返回值当成“已提交/待确认”，
+        # 也可能静默丢弃；下单前必须先用资产探测确认登录。
+        await self._ensure_logged_in()
 
         result = await run_module_call(
             "tdxquant",
@@ -141,6 +146,8 @@ class TdxTradeService:
 
         # pending_confirm 没有 order_id，但同样必须幂等，避免重复发送客户端确认信号
         if client_order_id and result.get("state") in ("accepted", "pending_confirm"):
+            if result.get("state") == "pending_confirm" and not result.get("pending_since"):
+                result["pending_since"] = time.strftime("%H%M%S")
             self._cache_order(client_order_id, result)
 
         audit_logger.info(
@@ -149,6 +156,93 @@ class TdxTradeService:
             result.get("state"), result.get("order_id"), result.get("raw_value"),
         )
         return result
+
+    async def _reconcile_replay(
+        self, client_order_id: str, cached: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """重放时以当前委托状态为准，避免 pending 快照永久陈旧。
+
+        TDX 的人工确认发生在客户端，网关没有回调；pending 缓存如果只返回
+        原始快照，客户端确认后再次重放会一直看到 ``pending_confirm``。
+        这里按 order_id（已知时）或标的/方向/数量/价格/时间（pending 时）
+        找到真实委托，把状态合并回重放结果并更新缓存。
+        """
+        replay = dict(cached)
+        order: Optional[Dict[str, Any]] = None
+        try:
+            if cached.get("order_id"):
+                order = await self._find_order(str(cached["order_id"]))
+            elif cached.get("state") == "pending_confirm":
+                orders = await self.query_orders()
+                order = self._find_pending_order(cached, orders)
+        except Exception as exc:  # noqa: BLE001
+            # 幂等重放不应因为一次状态查询失败而变成新的下单/报错；
+            # 查询不可用时退回缓存快照，由调用方稍后重试。
+            audit_logger.warning(
+                "pending replay reconcile failed client_order_id=%s: %s",
+                client_order_id, exc,
+            )
+            return replay
+        if order is None:
+            return replay
+
+        replay.update({
+            "order_id": str(order.get("order_id")),
+            "status": order.get("status"),
+            "status_text": order.get("status_text"),
+            "order_price": order.get("order_price"),
+            "order_volume": order.get("order_volume"),
+            "filled_price": order.get("filled_price"),
+            "filled_volume": order.get("filled_volume"),
+            "raw": order.get("raw") or replay.get("raw"),
+        })
+        if cached.get("state") == "pending_confirm":
+            replay["state"] = "accepted"
+            replay["pending_reconciled"] = True
+            replay["message"] = "待确认委托已由客户端确认"
+        self._cache_order(client_order_id, replay)
+        return replay
+
+    @staticmethod
+    def _find_pending_order(
+        result: Dict[str, Any], orders: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """把 pending 结果与真实委托做保守匹配。
+
+        pending 结果没有 order_id，只能按标的、方向、数量、价格匹配；
+        再用 ``pending_since`` 过滤掉同一标的历史上的同参数委托。
+        """
+        stock_code = result.get("stock_code")
+        side = result.get("side")
+        try:
+            volume = int(result.get("volume"))
+            price = float(result.get("price"))
+        except (TypeError, ValueError):
+            return None
+        since = str(result.get("pending_since") or "")
+        matches: List[Dict[str, Any]] = []
+        for order in orders:
+            if order.get("stock_code") != stock_code:
+                continue
+            try:
+                if int(order.get("order_volume")) != volume:
+                    continue
+                if abs(float(order.get("order_price")) - price) > 1e-6:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            order_time = str(order.get("time") or "")
+            if since and order_time and order_time < since:
+                continue
+            order_side = order.get("side")
+            if order_side not in (side, "unknown"):
+                continue
+            matches.append(order)
+        if not matches:
+            return None
+        active = [o for o in matches if o.get("status") in (1, 2, 3, 4)]
+        candidates = active or matches
+        return max(candidates, key=lambda o: str(o.get("time") or ""))
 
     def _get_cached_order(self, client_order_id: str) -> Optional[Dict[str, Any]]:
         with self._order_cache_lock:
@@ -387,26 +481,51 @@ class TdxTradeService:
         handle = self._provider.account_handle()
         return tq.query_stock_positions(handle)
 
+    async def _ensure_logged_in(self) -> None:
+        """空委托/空持仓时确认账户是否真的已登录。
+
+        TDX 未登录时 ``query_stock_orders`` / ``query_stock_positions`` 可能
+        返回空列表而不是错误，导致接口误报 ``success=true``。这里用资产探测
+        做一次兜底；已登录的空账户仍返回空列表。
+        """
+        if not getattr(self._provider, "account_configured", True):
+            raise TdxConfigError("未配置资金账户（JINGNI_TDX_ACCOUNT）")
+
+        probe = await run_module_call(
+            "tdxquant",
+            self._provider.probe_account,
+            (),
+            {},
+            timeout=self._timeout,
+            lane="trade",
+        )
+        if not probe.get("logged_in"):
+            raise TdxNotLoggedInError(
+                probe.get("reason") or "账户未登录，请先在通达信客户端登录模拟/实盘账户"
+            )
+
     async def query_orders(self) -> List[Dict[str, Any]]:
         rows = await run_module_call(
             "tdxquant", self._query_orders_sync, (), {}, timeout=self._timeout, lane="trade"
         )
+        self._raise_on_error(rows, "委托查询")
         if isinstance(rows, dict):
             rows = rows.get("Value") or []
         if not isinstance(rows, list):
             return []
+        if not rows:
+            await self._ensure_logged_in()
         return [self._normalize_order(row) for row in rows]
 
     async def query_asset(self) -> Dict[str, Any]:
         raw = await run_module_call(
             "tdxquant", self._query_asset_sync, (), {}, timeout=self._timeout, lane="trade"
         )
-        if not isinstance(raw, dict) or (
-            not raw.get("Value") and not raw.get("Cash")
-        ):
+        if not isinstance(raw, dict):
+            raise TdxError("资产查询返回格式异常")
+        self._raise_on_error(raw, "资产查询")
+        if not raw.get("Value") and not raw.get("Cash"):
             raise TdxNotLoggedInError("账户未登录或资产为空，请先在通达信客户端登录模拟/实盘账户")
-        if raw.get("ErrorId", "0") != "0":
-            return {"ErrorId": raw.get("ErrorId"), "raw": raw}
         try:
             cash = float(raw.get("Cash"))
         except (TypeError, ValueError):
@@ -422,11 +541,25 @@ class TdxTradeService:
         rows = await run_module_call(
             "tdxquant", self._query_positions_sync, (), {}, timeout=self._timeout, lane="trade"
         )
+        self._raise_on_error(rows, "持仓查询")
         if isinstance(rows, dict):
             rows = rows.get("Value") or []
         if not isinstance(rows, list):
             return []
+        if not rows:
+            await self._ensure_logged_in()
         return [self._normalize_position(row) for row in rows]
+
+    @staticmethod
+    def _raise_on_error(raw: Any, action: str) -> None:
+        """TDX 返回 ErrorId != \"0\" 时必须报错，不能返回 success=true 的载荷。"""
+        if not isinstance(raw, dict):
+            return
+        error_id = raw.get("ErrorId")
+        if error_id in (None, "", 0, "0"):
+            return
+        message = raw.get("Msg") or raw.get("Message") or str(error_id)
+        raise TdxError(f"{action}失败: {message} (ErrorId={error_id})")
 
     # ------------------------------------------------------------------
     # 规范化

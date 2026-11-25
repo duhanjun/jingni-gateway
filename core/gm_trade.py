@@ -42,6 +42,17 @@ class GMTradeService:
         self._config = config
         self._account = getattr(getattr(config, "GM", None), "account_id", "") or ""
         self._timeout = getattr(config, "CONNECT_TIMEOUT", 30)
+        gm_cfg = getattr(config, "GM", None)
+        # 撤单终态对账：原实现固定 4×0.3s（1.2s），晚到的终态会被误判为失败。
+        self._cancel_timeout = float(
+            getattr(gm_cfg, "cancel_reconcile_timeout", 5)
+        )
+        self._cancel_poll_interval = float(
+            getattr(gm_cfg, "cancel_poll_interval", 0.2)
+        )
+        self._cancel_poll_max_interval = float(
+            getattr(gm_cfg, "cancel_poll_max_interval", 1.0)
+        )
 
         self._order_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._order_cache_lock = threading.Lock()
@@ -200,27 +211,41 @@ class GMTradeService:
         raw = await self._call("order_cancel", kwargs)
 
         # order_cancel 返回 None/True 只代表请求已提交；必须看到终态才算成功。
+        # 用截止时间 + 指数退避，避免晚到的终态被 1.2s 固定窗口误判。
+        deadline = time.monotonic() + self._cancel_timeout
+        started = time.monotonic()
+        delay = min(self._cancel_poll_interval, self._cancel_poll_max_interval)
         status = None
-        for _ in range(4):
-            await asyncio.sleep(0.3)
+        polls = 0
+
+        while True:
+            await asyncio.sleep(delay)
+            polls += 1
             try:
                 orders_after = await self.query_orders()
             except Exception as exc:
                 logger.warning("撤单后查询 GM 委托失败: %s", exc)
-                continue
+                orders_after = []
             for order in orders_after:
                 if isinstance(order, dict) and str(order.get("order_id")) == target_order_id:
                     status = order.get("status")
                     break
             if status in (5, 12):
                 break
+            if time.monotonic() >= deadline:
+                break
+            delay = min(delay * 1.5, self._cancel_poll_max_interval)
 
         confirmed = status in (5, 12)
-        request_success = raw is not False and raw is not None
+        # gmtrade.order_cancel 成功时通常返回 None，失败会抛异常；
+        # 只有显式 False 才代表请求被拒绝，None 应视为“已受理”。
+        request_success = raw is not False
         success = request_success and confirmed
+        waited_ms = round((time.monotonic() - started) * 1000, 1)
         audit_logger.info(
-            "cancel_order order_id=%s cl_ord_id=%s request_success=%s status=%s confirmed=%s",
-            target_order_id, target_cl_ord_id, request_success, status, confirmed,
+            "cancel_order order_id=%s cl_ord_id=%s request_success=%s status=%s "
+            "confirmed=%s polls=%s",
+            target_order_id, target_cl_ord_id, request_success, status, confirmed, polls,
         )
         return {
             "success": success,
@@ -228,6 +253,9 @@ class GMTradeService:
             "order_id": target_order_id,
             "cl_ord_id": target_cl_ord_id,
             "status": status,
+            "request_accepted": request_success,
+            "polls": polls,
+            "waited_ms": waited_ms,
             "error": None if confirmed else "CANCEL_NOT_CONFIRMED",
             "raw": raw,
         }
@@ -249,7 +277,25 @@ class GMTradeService:
     async def query_positions(self) -> List[Dict[str, Any]]:
         kwargs = {"account_id": self._account} if self._account else {}
         raw = await self._call("get_position", kwargs)
-        return raw if isinstance(raw, list) else []
+        if not isinstance(raw, list):
+            return []
+        # GM 在清仓后仍可能返回 volume=0 的占位行；对外持仓列表只保留实际持仓，
+        # 避免调用方把零股占位行当成仍持有该标的。
+        return [row for row in raw if self._position_volume(row) > 0]
+
+    @staticmethod
+    def _position_volume(row: Any) -> float:
+        if not isinstance(row, dict):
+            return 0.0
+        for key in ("volume", "total_volume", "current_volume"):
+            value = row.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return 0.0
 
     @staticmethod
     def _first_order(raw: Any) -> Optional[Dict[str, Any]]:

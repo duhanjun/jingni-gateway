@@ -71,7 +71,7 @@ def test_cancel_and_queries(monkeypatch):
         if function == "cancel_order_stock":
             return {"success": True, "data": 0}
         if function == "query_stock_orders":
-            return {"success": True, "data": [{"order_id": 1, "order_status": 2}]}
+            return {"success": True, "data": [{"order_id": 12345, "order_status": 54}]}
         if function == "query_stock_asset":
             return {"success": True, "data": {"cash": 1000.0}}
         if function == "query_stock_positions":

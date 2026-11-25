@@ -41,7 +41,13 @@ class FakeGM:
 
 def _service(account="gm-account"):
     cfg = SimpleNamespace(
-        GM=SimpleNamespace(account_id=account, token="test-token"),
+        GM=SimpleNamespace(
+            account_id=account,
+            token="test-token",
+            cancel_reconcile_timeout=0.2,
+            cancel_poll_interval=0.05,
+            cancel_poll_max_interval=0.1,
+        ),
         CONNECT_TIMEOUT=5,
     )
     api = FakeGM()
@@ -144,3 +150,15 @@ def test_empty_cash_raises_not_logged_in():
 
     with pytest.raises(GMNotLoggedInError):
         asyncio.run(service.query_asset())
+
+
+def test_query_positions_filters_zero_volume_placeholder():
+    service, api = _service()
+    api.get_position = lambda **kwargs: [
+        {"symbol": "SHSE.510300", "volume": "0"},
+        {"symbol": "SHSE.601398", "volume": "100"},
+    ]
+
+    positions = asyncio.run(service.query_positions())
+
+    assert [p["symbol"] for p in positions] == ["SHSE.601398"]
