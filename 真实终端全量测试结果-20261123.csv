@@ -1,0 +1,131 @@
+﻿provider,module,item,status,elapsed_ms,error_code,detail
+GM,gmdata,history_n,PASS,3915,,
+GM,gmdata,history,PASS,8,,
+GM,gmdata,get_fundamentals,EMPTY,20,,
+GM,gmdata,get_fundamentals_n,EMPTY,24,,
+GM,gmdata,get_symbol_infos,PASS,18,,
+GM,gmdata,get_symbols,PASS,8,,
+GM,gmdata,get_history_symbol,PASS,12,,
+GM,gmdata,get_trading_dates_by_year,PASS,84,,
+GM,gmdata,get_trading_dates,PASS,21,,
+GM,gmdata,get_trading_session,PASS,20,,
+GM,gmdata,get_instrumentinfos,PASS,27,,
+GM,gmdata,get_instruments,PASS,20,,
+GM,gmdata,get_history_instruments,PASS,25,,
+GM,gmdata,get_constituents,EMPTY,14,,
+GM,gmdata,get_history_constituents,EMPTY,8,,
+GM,gmdata,get_industry,EMPTY,15,,
+GM,gmdata,get_sector,EMPTY,20,,
+GM,gmdata,get_concept,EMPTY,12,,
+GM,gmdata,stk_get_adj_factor,PASS,274,,
+GM,gmdata,stk_get_dividend,PASS,32,,
+GM,gmdata,stk_get_daily_basic,PASS,63,,
+GM,gmdata,stk_get_daily_basic_pt,PASS,53,,
+GM,gmdata,stk_get_daily_mktvalue,PASS,49,,
+GM,gmdata,stk_get_daily_mktvalue_pt,PASS,59,,
+GM,gmdata,stk_get_daily_valuation,PASS,72,,
+GM,gmdata,stk_get_daily_valuation_pt,PASS,53,,
+GM,gmdata,stk_get_index_constituents,PASS,77,,
+GM,gmdata,stk_get_industry_category,PASS,66,,
+GM,gmdata,stk_get_industry_constituents,PASS,1318,,
+GM,gmdata,stk_get_sector_category,PASS,49,,
+GM,gmdata,stk_get_sector_constituents,PASS,49,,
+GM,gmdata,stk_get_money_flow,PASS,59,,
+GM,gmdata,stk_get_share_change,PASS,60,,
+GM,gmdata,stk_get_shareholder_num,PASS,62,,
+GM,gmdata,stk_get_symbol_industry,PASS,44,,
+GM,gmdata,stk_get_symbol_sector,PASS,70,,
+GM,gmdata,stk_get_top_shareholder,PASS,61,,
+GM,gmdata,stk_get_ration,EMPTY,55,,
+GM,gmdata,stk_get_fundamentals_balance,PASS,39,,
+GM,gmdata,stk_get_fundamentals_balance_pt,PASS,51,,
+GM,gmdata,stk_get_fundamentals_cashflow,PASS,59,,
+GM,gmdata,stk_get_fundamentals_cashflow_pt,PASS,45,,
+GM,gmdata,stk_get_fundamentals_income,PASS,59,,
+GM,gmdata,stk_get_fundamentals_income_pt,PASS,76,,
+GM,gmdata,stk_get_finance_audit,EMPTY,41,,
+GM,gmdata,stk_get_finance_deriv,PASS,69,,
+GM,gmdata,stk_get_finance_deriv_pt,PASS,35,,
+GM,gmdata,stk_get_finance_forecast,PASS,75,,
+GM,gmdata,stk_get_finance_prime,PASS,48,,
+GM,gmdata,stk_get_finance_prime_pt,PASS,62,,
+GM,gmdata,fut_get_continuous_contracts,PASS,55,,
+GM,gmdata,fut_get_contract_info,SDK_NO_PERMISSION,82,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFutService/FutGetContractInfo"", ""function"": ""fut_get_contract_info""}"
+GM,gmdata,fut_get_transaction_ranking,SDK_NO_PERMISSION,71,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFutService/FutGetTransactionRanking"", ""function"": ""fut_get_transaction_ranking""}"
+GM,gmdata,fut_get_transaction_rankings,SDK_NO_PERMISSION,23,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFutService/FutGetTransactionRankings"", ""function"": ""fut_get_transaction_rankings""}"
+GM,gmdata,fut_get_warehouse_receipt,SDK_NO_PERMISSION,74,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFutService/GetWarehouseReceipt"", ""function"": ""fut_get_warehouse_receipt""}"
+GM,gmdata,get_continuous_contracts,PASS,19,,
+GM,gmdata,get_contract_expire_rest_days,PASS,41,,
+GM,gmdata,get_expire_rest_days,PASS,25,,
+GM,gmdata,fnd_get_adj_factor,SDK_NO_PERMISSION,72,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFndService/FndGetAdjFactor"", ""function"": ""fnd_get_adj_factor""}"
+GM,gmdata,fnd_get_dividend,SDK_NO_PERMISSION,55,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFndService/FndGetDividend"", ""function"": ""fnd_get_dividend""}"
+GM,gmdata,fnd_get_etf_constituents,SDK_NO_PERMISSION,63,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFndService/GetEtfConstituents"", ""function"": ""fnd_get_etf_constituents""}"
+GM,gmdata,fnd_get_net_value,SDK_NO_PERMISSION,63,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFndService/GetNetValue"", ""function"": ""fnd_get_net_value""}"
+GM,gmdata,fnd_get_portfolio,SDK_NO_PERMISSION,65,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFndService/GetPortfolio"", ""function"": ""fnd_get_portfolio""}"
+GM,gmdata,fnd_get_share,SDK_NO_PERMISSION,67,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFndService/GetShare"", ""function"": ""fnd_get_share""}"
+GM,gmdata,fnd_get_split,SDK_NO_PERMISSION,74,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundFndService/GetSplit"", ""function"": ""fnd_get_split""}"
+GM,gmdata,bnd_get_amount_change,SDK_NO_PERMISSION,23,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundBndService/GetAmountChange"", ""function"": ""bnd_get_amount_change""}"
+GM,gmdata,bnd_get_analysis,SDK_NO_PERMISSION,60,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundBndService/GetAnalysis"", ""function"": ""bnd_get_analysis""}"
+GM,gmdata,bnd_get_call_info,SDK_NO_PERMISSION,35,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundBndService/GetCallInfo"", ""function"": ""bnd_get_call_info""}"
+GM,gmdata,bnd_get_conversion_price,SDK_NO_PERMISSION,66,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundBndService/GetConversionPrice"", ""function"": ""bnd_get_conversion_price""}"
+GM,gmdata,bnd_get_put_info,SDK_NO_PERMISSION,51,GM_SDK_ERROR,"GmError: {""status"": 2001, ""message"": ""用户无此数据接口权限; 请求方法无权限:/data.fund.api.FundBndService/GetPutInfo"", ""function"": ""bnd_get_put_info""}"
+GM,gmdata,option_calculate_delta,PASS,1630,,
+GM,gmdata,option_calculate_gamma,PASS,18,,
+GM,gmdata,option_calculate_greeks,PASS,32,,
+GM,gmdata,option_calculate_hv,PASS,21,,
+GM,gmdata,option_calculate_iv,PASS,32,,
+GM,gmdata,option_calculate_ivsurface,SDK_BUG,31,GM_SDK_ERROR,KeyError: 'underlying_symbol'
+GM,gmdata,option_calculate_price,PASS,37,,
+GM,gmdata,option_calculate_rho,PASS,23,,
+GM,gmdata,option_calculate_t,PASS,9,,
+GM,gmdata,option_calculate_theta,PASS,5,,
+GM,gmdata,option_calculate_vega,PASS,29,,
+GM,gmdata,option_get_comb_info,SDK_TRADE_ERROR,10040,GM_SDK_ERROR,"GmError: {""status"": 1013, ""message"": ""交易服务调用错误"", ""function"": ""option_get_comb_info""}"
+GM,gmdata,option_get_comb_pos,SDK_TRADE_ERROR,10021,GM_SDK_ERROR,"GmError: {""status"": 1013, ""message"": ""交易服务调用错误"", ""function"": ""option_get_comb_pos""}"
+GM,gmdata,option_get_delisted_dates,SKIP,0,,SDK_HANG: 期权链查询在当前终端 >60s 无响应
+GM,gmdata,option_get_exercise_prices,SKIP,0,,SDK_HANG: 期权链查询在当前终端 >60s 无响应
+GM,gmdata,option_get_symbols_by_exchange,SKIP,0,,SDK_HANG: 期权链查询在当前终端 >60s 无响应
+GM,gmdata,option_get_symbols_by_in_at_out,SDK_BUG,4,GM_SDK_ERROR,UnboundLocalError: cannot access local variable 'price' where it is not associated with a value
+GM,gmdata,get_history_bars_l2,MODE_LIMITED,19,GM_SDK_ERROR,"GmError: {""status"": 1028, ""message"": ""不支持的服务"", ""function"": ""get_history_l2bars""}"
+GM,gmdata,get_history_l2bars,MODE_LIMITED,44,GM_SDK_ERROR,"GmError: {""status"": 1028, ""message"": ""不支持的服务"", ""function"": ""get_history_l2bars""}"
+GM,gmdata,get_history_l2orders,MODE_LIMITED,21,GM_SDK_ERROR,"GmError: {""status"": 1028, ""message"": ""不支持的服务"", ""function"": ""get_history_l2orders""}"
+GM,gmdata,get_history_l2orders_queue,MODE_LIMITED,37,GM_SDK_ERROR,"GmError: {""status"": 1028, ""message"": ""不支持的服务"", ""function"": ""get_history_l2orders_queue""}"
+GM,gmdata,get_history_l2ticks,MODE_LIMITED,23,GM_SDK_ERROR,"GmError: {""status"": 1028, ""message"": ""不支持的服务"", ""function"": ""get_history_l2ticks""}"
+GM,gmdata,get_history_l2transactions,MODE_LIMITED,37,GM_SDK_ERROR,"GmError: {""status"": 1028, ""message"": ""不支持的服务"", ""function"": ""get_history_l2transactions""}"
+GM,gmdata,get_history_ticks_l2,MODE_LIMITED,23,GM_SDK_ERROR,"GmError: {""status"": 1028, ""message"": ""不支持的服务"", ""function"": ""get_history_l2ticks""}"
+GM,gmdata,get_history_transaction_l2,MODE_LIMITED,43,GM_SDK_ERROR,"GmError: {""status"": 1028, ""message"": ""不支持的服务"", ""function"": ""get_history_l2transactions""}"
+GM,gmdata,get_version,PASS,24,,
+GM,gmdata,get_strerror,PASS,12,,
+GM,gmdata,last_tick,MODE_LIMITED,5,GM_SDK_ERROR,"GmError: {""status"": 1030, ""message"": ""该函数不支持在当前策略运行模式"", ""function"": ""last_tick""}"
+GM,gmdata,current_price,PASS,104,,
+GM,gmdata,current,PASS,29,,
+GM,gmdata,stk_hk_inst_holding_detail_info,EMPTY,24,,
+GM,gmdata,stk_hk_inst_holding_info,EMPTY,77,,
+GM,gmdata,stk_quota_shszhk_infos,PASS,70,,
+GM,gmdata,stk_active_stock_top10_shszhk_info,PASS,70,,
+GM,gmdata,stk_abnor_change_detail,PASS,943,,
+GM,gmdata,stk_abnor_change_stocks,PASS,163,,
+GM,gmdata,ipo_get_instruments,PASS,18,,
+GM,gmdata,ipo_get_lot_info,PASS,16,,
+GM,gmdata,ipo_get_match_number,PASS,34,,
+GM,gmdata,ipo_get_quota,PASS,25,,
+TDX,tdxdata,get_market_data,PASS,55,,
+TDX,tdxdata,get_market_snapshot,PASS,14,,
+TDX,tdxdata,get_sector_list,PASS,41,,
+TDX,tdxdata,get_stock_list_in_sector,PASS,17,,
+TDX,tdxdata,get_trading_dates,PASS,11,,
+TDX,tdxdata,get_divid_factors,PASS,30,,
+TDX,tdxdata,get_stock_info,PASS,31,,
+TDX,tdxdata,get_more_info,PASS,27,,
+TDX,tdxdata,get_kzz_info,PASS,10,,
+TDX,tdxdata,get_financial_data,PASS,40,,
+TDX,tdxdata,get_stock_list,PASS,30,,
+TDX,tdxdata,refresh_cache,PASS,8,,
+TDX,typed_trade,asset,TDX_NOT_LOGGED_IN,29,TDX_NOT_LOGGED_IN,账户未登录或资产为空，请先在通达信客户端登录模拟/实盘账户
+TDX,typed_trade,orders,TDX_NOT_LOGGED_IN,18,TDX_NOT_LOGGED_IN,账户未登录或资产为空
+TDX,typed_trade,positions,TDX_NOT_LOGGED_IN,31,TDX_NOT_LOGGED_IN,账户未登录或资产为空
+TDX,typed_trade,order_valid,TDX_NOT_LOGGED_IN,21,TDX_NOT_LOGGED_IN,账户未登录或资产为空
+TDX,typed_trade,order_price_zero,INVALID_ARGUMENT,2,INVALID_ARGUMENT,限价单 price 必须大于 0
+TDX,typed_trade,order_bad_code,PASS,34,HTTP_422,
+TDX,typed_trade,cancel,TDX_NOT_LOGGED_IN,11,TDX_NOT_LOGGED_IN,账户未登录或资产为空，请先在通达信客户端登录模拟/实盘账户
+TDX,typed_trade,generic_trade_rpc,USE_TRADE_ENDPOINT,12,USE_TRADE_ENDPOINT,TDX 交易不开放通用 RPC；查询和下单/撤单都走 /api/v1/tdxquant/trade/*

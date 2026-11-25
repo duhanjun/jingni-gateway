@@ -1,0 +1,38 @@
+ID,系统,测试项,结果,关键证据
+PRE-01,GM/TDX,网关启动与健康,PASS,8010 健康；GM/TDX provider 均可用
+PRE-02,GM,模拟账户登录,PASS,gm health healthy；account_configured=true
+PRE-03,TDX,模拟账户登录,PASS,logged_in=true；account_handle=1；cash=1000147.22
+PRE-04,GM/TDX,基线查询,PASS,GM 601398/510300 各100股；TDX 无持仓/无委托
+PRE-05,TDX,收盘后cash差额对账,PASS,11-24 开盘 cash/asset 均 1000147.22；TotalFreeze=0
+PRE-06,GM,隔日持仓确认,PASS,601398 与 510300 均 available=100
+GM-01,GM,隔日持仓限价卖出,PASS,601398 100股@9.90 accepted status=1
+GM-02,GM,按order_id撤卖单,PASS,confirmed status=5；available恢复100
+GM-03,GM,按真实cl_ord_id撤单,PASS,confirmed status=5；polls=1
+GM-04,GM,市价卖出成交,PASS,510300 100股 status=3；成交价4.059；成交额405.90；佣金5.00
+GM-05,GM,position_effect=3卖单受理与成交,PASS,510300限价受理后撤单；601398市价100股 status=3 成交价9.11 成交额911.00 佣金5.00；查询归一化为4
+GM-06,GM,卖出后资产/持仓对账,PASS,最终nav=available=99977.89996；frozen归零；cum_commission=20.00；无status=1在途单
+GM-07,GM,client_order_id幂等重放,PASS,idempotent_replay=true；未新增委托
+GM-08,GM,北交所代码/权限,NOT_RUN,未确认北交所权限；未下单
+GM-09,GM,最终持仓与在途收口,PASS,GM空仓；8笔委托均终态（2成交/6撤单）；含3笔外部策略600000买单均status=5；无status=1
+GM-10,GM,外部策略委托巡检,WARN,14:21:58两笔与14:52:31一笔600000 100股@9.69；strategy_id=538c7853...；均status=5未成交；非本轮API下发
+TDX-01,TDX,登录后资产/委托/持仓查询,PASS,三者success=true；数值与终端一致
+TDX-02,TDX,限价买入与撤单回归,PASS,order 240534 accepted；撤单confirmed status=0；现金不变
+TDX-03,TDX,盘中及收盘后分钟数据,DATA_MISSING,"1m/5m/15m/30m/1h全天均空；14:00仍空；15:00 1d Close=10.69 Volume=72,450,360；mock终端无.lc1等缓存"
+TDX-04,TDX,盘中快照新鲜度,PASS,10:37三只标的均有盘口；13:40 Volume+8235；14:47/14:53窗口无成交；15:00更新到10.69/724503，确认非冻结
+TDX-05,TDX,cash字段次日对账,PASS,health/asset/get_cash均为1000147.22；TotalFreeze=0
+TDX-06,TDX,notify=1人工确认,PASS,10:49 pending；10:59 生成323862 status=1；撤单confirmed status=0；现金不变
+TDX-07,TDX,长pending与确认后重放,PARTIAL,确认后重放曾返回stale pending；已修复为pending_reconciled=true并返回323862真实状态；11:05 pending存活51分钟后生成352326；30min破坏性重放未执行
+TDX-08,TDX,refresh_cache盘中回归,PASS,Refresh Cache Success；分钟数据仍为空
+TDX-09,TDX,上午收盘后数据复查,PASS,"11:35 1d最新Close=10.66 Volume=37,262,752；1m仍空；快照10.66/372627"
+TDX-10,TDX,accepted委托重放对账,PASS,order 350943 重放返回status=1 open；撤单confirmed status=0；现金不变
+TDX-11,TDX,pending存活上限与TTL修正,PASS,11:05 pending于11:56:27生成352326（约51分钟）；13:20撤单status=0；默认TTL 1800->21600秒
+TDX-12,TDX,下午盘中数据复查,PASS,"13:30 1d 10.62/42,023,368；14:00 1d 10.65/47,797,716；1m仍空"
+TDX-13,TDX,收盘数据与资金收口,PASS,"15:00 1d Close=10.69 Volume=72,450,360；快照10.69/724503/77175.13；5笔委托status=0；0持仓；cash=1000147.22 TotalFreeze=0"
+RT-01,GM,last_tick实时模式复测,WARN,盘中1030；11:35 UnicodeDecodeError；15:00仍1030且2.5ms；均返回GM_SDK_ERROR
+RT-02,GM,current_price实时价,PASS,15:00返回600000=10.69/601398=9.22/510300=4.033；14:47客户端45s超时但服务端48.8s成功；14:53 22.9s，15:00 26.3s
+RT-03,TDX,板块/个股列表盘中复查,PASS,sector=880201 38只；market=5 5584只，7 1700只，8 1494只，53 358只；kzz_123039为空
+FIX-01,GM,清仓零股占位行过滤,PASS,清仓后/trade/positions返回空列表
+FIX-02,TDX,SDK字典错误转success=false,PASS,非法周期1min返回TDX_ERROR
+FIX-03,TDX,pending确认后重放对账,PASS,重放返回order_id=323862、status=0、state=accepted、pending_reconciled=true
+FIX-04,TDX,pending幂等窗口覆盖交易时段,PASS,JINGNI_TDX_PENDING_IDEMPOTENCY_TTL默认1800->21600秒；.env.example/README同步
+REG-01,GM/TDX,离线回归,PASS,256 collected；225 passed；31 skipped

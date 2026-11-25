@@ -8,6 +8,8 @@
 
 当前版本：`2.0.0`
 
+> 能力边界以 [`功能矩阵.md`](功能矩阵.md) 为准：`/rpc/whitelist` 与 `/rpc/methods` 只返回“已支持”，明确不支持的函数通过 `/rpc/capabilities` 查看，并在 `/rpc/execute` 返回 `NOT_SUPPORTED`。
+
 ---
 
 ## 最新功能
@@ -17,6 +19,7 @@
 - 三个 Provider：`xtquant`、`gm`、`tdxquant`
 - HTTP 类型化交易端点 + 通用数据 RPC
 - 通用 RPC **不再暴露下单/撤单**，交易写操作只走 `/trade/*`
+- `/rpc/whitelist`、`/rpc/methods` 只暴露 supported；`/rpc/capabilities` 返回 supported / unsupported / runtime_missing / compat 完整矩阵，并列出 xtquant SDK 26 项缺口处置
 - API Key 认证，支持 `X-API-Key` Header 和 `api_key` Query 参数
 - 默认监听 `127.0.0.1`，避免无意暴露到局域网
 
@@ -32,7 +35,7 @@
 
 | Provider | 下单 | 撤单 | 资金/持仓/委托 | 说明 |
 |---|---|---|---|---|
-| xtquant | `POST /api/v1/xtquant/trade/order` | `/trade/cancel` | `/trade/asset`、`/trade/positions`、`/trade/orders` | 代码已接入；本机未安装 xtquant SDK，尚未真实联调 |
+| xtquant | `POST /api/v1/xtquant/trade/order` | `/trade/cancel` | `/trade/asset`、`/trade/positions`、`/trade/orders` | 代码已接入；SDK 已复制到 `.venv`，本机未启动 MiniQMT，尚未真实联调 |
 | GM | `POST /api/v1/gm/trade/order` | `/trade/cancel` | 同上 | `gmtrade` sidecar；模拟账户限价/市价、成交、按真实 `order_id`/`cl_ord_id` 撤单、幂等、立即拒单识别已验证；卖出受 T+1 限制 |
 | tdxquant | `POST /api/v1/tdxquant/trade/order` | `/trade/cancel` | 同上 | `tqcenter` 直连；模拟账户买卖、限价/市价/涨跌停价、`notify=1`、撤单、跨重启幂等已验证；真实账户待实盘 |
 
@@ -47,10 +50,10 @@
 
 ### WebSocket
 
-- 行情订阅、全量行情订阅、取消订阅
-- `ping/pong` 心跳、心跳超时关闭
+- 连接、`ping/pong` 心跳、心跳超时关闭
 - 最大连接数限制、同 `client_id` 重连替换
-- 交易事件推送接口已预留；当前 GM 交易以轮询查询为主
+- **行情推送：默认关闭**。`JINGNI_WS_MARKET_DATA=0` 时订阅请求返回 `NOT_SUPPORTED`；回调桥接已改为 `loop.call_soon_threadsafe`，开启后仍需实盘验证。GM/TDX 没有行情 WebSocket。
+- **交易事件推送：明确不支持**。`trade_event` 只是预留消息类型；xtquant 未实现交易回调，GM 未接 `gmtrade.start()`，TDX 未接回调桥接。当前交易状态通过 `/trade/orders` 轮询；订阅请求返回 `NOT_SUPPORTED`。
 
 ### GM 外部交易 sidecar
 
@@ -74,17 +77,17 @@
 
 | 能力 | 状态 |
 |---|---|
-| xtquant 数据/交易代码 | 已完成接入；本机没有 xtquant SDK，未真实联调 |
+| xtquant 数据/交易代码 | 已完成接入；SDK 已复制到 `.venv`，本机未启动 MiniQMT，未真实联调 |
 | GM `gm.api` 行情 | 真实接口可用 |
-| GM `gmtrade` 模拟账户 | 限价/市价、成交、持仓、按真实 `order_id`/`cl_ord_id` 撤单、幂等、立即拒单识别已验证；卖出受 T+1 限制 |
+| GM `gmtrade` 模拟账户 | 限价/市价买入、隔日持仓限价卖出、市价卖出成交、按真实 `order_id`/`cl_ord_id` 撤单、幂等、立即拒单识别已验证；`position_effect=3` 已实测受理并市价成交，查询归一化为 4（按平昨处理） |
 | GM 实盘 | 未切换、未下实盘单 |
-| TDX tqcenter 登录与资产 | 模拟账户 `logged_in=true`，资产可查 |
-| TDX 模拟交易 | 登录、买入/卖出、限价/市价/涨跌停价、`notify=1` 人工确认、撤单已验证；市价成交状态查询有延迟 |
+| TDX tqcenter 登录与资产 | 支持模拟账户登录与资产查询；2026-11-24 开盘期登录正常，`cash=1000147.22`、`TotalFreeze=0`；2026-11-23 收盘后曾出现未登录状态 |
+| TDX 模拟交易 | 登录、买入/卖出、限价/市价/涨跌停价、`notify=1` 人工确认、撤单已验证；2026-11-24 开盘期限价买入→撤单回归通过；市价成交状态查询有延迟 |
 | TDX 实盘 | 券商已开放 TQ 自动下单权限，尚未做实盘小额验证 |
-| TDX 分钟数据 | 当前终端无分钟数据/Level2，`1m/5m/15m/30m/1h` 为空 |
-| 自动化测试 | `89 passed, 5 skipped` |
+| TDX 分钟数据 | 当前 mock 终端无分钟数据/Level2 缓存，2026-11-24 开盘期 `1m/5m/15m/30m/1h` 仍为空，`1d` 正常 |
+| 自动化测试 | `225 passed, 31 skipped`（xtquant live 用例在未启动 MiniQMT 时自动跳过） |
 
-> TDX 收盘后能否提交委托取决于终端 OMS；本次 15:03 实测限价买入 `accepted` 并可撤单，若返回 `-7353` 属于终端时段限制，不是网关异常。真实 `accepted → 撤单` 闭环仍建议在连续竞价时段复验。
+> 2026-11-24 开盘期实测：TDX 模拟账户限价买入 `accepted`、可撤单，资金保持 `1000147.22`；GM 隔日持仓限价卖撤与市价卖出成交均完成。TDX 收盘后能否提交委托仍取决于终端 OMS，若返回 `-7353` 属于终端时段限制，不是网关异常。
 
 ---
 
@@ -166,7 +169,7 @@ pip install -r requirements.txt
 copy "<QMT_HOME>\bin.x64\Lib\site-packages\xtquant" ".venv\Lib\site-packages\"
 ```
 
-当前机器 QMT 安装目录下没有 `xtquant`，只有 `ptrade`，因此 xtquant 尚未联调。
+当前机器已从 `D:\gszq\qmt\bin.x64\Lib\site-packages\xtquant` 复制到 `.venv\Lib\site-packages\xtquant`（105 个文件，约 40.6 MB），`xtquant.xtdata` 与 `xtquant.xttrader` 均可导入。默认 `MINI_QMT_PATH` 仍指向不存在的 `D:\gjzq\qmt\userdata_mini`，需用 `JINGNI_QMT_PATH` 指向实际的 `D:\gszq\qmt\userdata_mini`，并配置 `JINGNI_QMT_ACCOUNT`。
 
 ### 4. GM（可选）
 
@@ -232,7 +235,7 @@ copy .env.example .env
 | `JINGNI_TDX_TIMEOUT` | 数据/交易调用超时，默认 `30` 秒 |
 | `JINGNI_TDX_CANCEL_RECONCILE_TIMEOUT` | 撤单对账超时，默认 `30` 秒 |
 | `JINGNI_TDX_POLL_INTERVAL` | 委托状态轮询间隔，默认 `1.0` 秒 |
-| `JINGNI_TDX_PENDING_IDEMPOTENCY_TTL` | `pending_confirm` 人工确认幂等窗口，默认 `1800` 秒 |
+| `JINGNI_TDX_PENDING_IDEMPOTENCY_TTL` | `pending_confirm` 人工确认幂等窗口，默认 `21600` 秒（6 小时，覆盖交易时段） |
 | `JINGNI_TDX_IDEMPOTENCY_DB` | 默认 `data/tdx_idempotency.sqlite3` |
 
 `.env` 已在 `.gitignore` 中；不要提交 Token、API Key、账号。
@@ -277,17 +280,18 @@ X-API-Key: <JINGNI_API_KEY>
 |---|---|---|
 | GET | `/` | 服务信息与 Provider 状态 |
 | GET | `/health` | 总健康检查 |
-| GET | `/api/v1/stats` | 连接统计与白名单 |
-| WS | `/ws` | 行情/交易事件 WebSocket |
+| GET | `/api/v1/stats` | 连接统计与各 Provider 的 supported RPC 清单 |
+| WS | `/ws` | 连接/心跳 WebSocket；行情推送默认关闭，交易事件推送未实现 |
 
 ### xtquant
 
 | 方法 | 端点 | 说明 |
 |---|---|---|
 | GET | `/api/v1/xtquant/health` | 健康检查 |
-| POST | `/api/v1/xtquant/rpc/execute` | 白名单内 RPC，模块 `xtdata` 或 `xttrader`；交易写操作只走 `/trade/*` |
-| GET | `/api/v1/xtquant/rpc/methods` | 可用方法 |
-| GET | `/api/v1/xtquant/rpc/whitelist` | 白名单 |
+| POST | `/api/v1/xtquant/rpc/execute` | supported 内 RPC，模块 `xtdata` 或 `xttrader`；交易写操作只走 `/trade/*` |
+| GET | `/api/v1/xtquant/rpc/methods` | 已支持方法（只含 supported） |
+| GET | `/api/v1/xtquant/rpc/whitelist` | 已支持函数清单（只含 supported） |
+| GET | `/api/v1/xtquant/rpc/capabilities` | 完整能力矩阵：supported / unsupported / typed_trade |
 | POST | `/api/v1/xtquant/symbol/convert` | 代码格式转换 |
 | POST | `/api/v1/xtquant/trade/order` | 类型化下单 |
 | POST | `/api/v1/xtquant/trade/cancel` | 类型化撤单 |
@@ -300,9 +304,10 @@ X-API-Key: <JINGNI_API_KEY>
 | 方法 | 端点 | 说明 |
 |---|---|---|
 | GET | `/api/v1/gm/health` | 健康检查，含 `gmtrade_available` |
-| POST | `/api/v1/gm/rpc/execute` | 白名单内 RPC，模块 `gmdata` 或 `gmtrade`；交易写操作只走 `/trade/*` |
-| GET | `/api/v1/gm/rpc/methods` | 可用方法 |
-| GET | `/api/v1/gm/rpc/whitelist` | 白名单 |
+| POST | `/api/v1/gm/rpc/execute` | supported 内 RPC，模块 `gmdata` 或 `gmtrade`；`gmtrade` 仅三个查询；交易写操作只走 `/trade/*` |
+| GET | `/api/v1/gm/rpc/methods` | 已支持方法（只含 supported） |
+| GET | `/api/v1/gm/rpc/whitelist` | 已支持函数清单；`gmtrade` 仅 `get_cash/get_position/get_orders` |
+| GET | `/api/v1/gm/rpc/capabilities` | 完整能力矩阵：supported / unsupported / typed_trade |
 | POST | `/api/v1/gm/trade/order` | 类型化按量下单 |
 | POST | `/api/v1/gm/trade/cancel` | 撤单，支持 `order_id` 或 GM 实际 `cl_ord_id`；本地 `client_order_id` 仅用于幂等 |
 | GET | `/api/v1/gm/trade/orders` | 委托查询 |
@@ -320,9 +325,10 @@ GM 注意：
 | 方法 | 端点 | 说明 |
 |---|---|---|
 | GET | `/api/v1/tdxquant/health` | 健康检查，含 `logged_in` |
-| POST | `/api/v1/tdxquant/rpc/execute` | 白名单内 RPC，模块 `tdxdata` 或 `tdxtrade`；交易写操作只走 `/trade/*` |
-| GET | `/api/v1/tdxquant/rpc/methods` | 可用方法 |
-| GET | `/api/v1/tdxquant/rpc/whitelist` | 白名单 |
+| POST | `/api/v1/tdxquant/rpc/execute` | 仅 `tdxdata`；`tdxtrade` 不开放通用 RPC，交易写操作只走 `/trade/*` |
+| GET | `/api/v1/tdxquant/rpc/methods` | 已支持方法（只含 `tdxdata`） |
+| GET | `/api/v1/tdxquant/rpc/whitelist` | 已支持函数清单（只含 `tdxdata`） |
+| GET | `/api/v1/tdxquant/rpc/capabilities` | 完整能力矩阵：supported / unsupported / typed_trade |
 | POST | `/api/v1/tdxquant/trade/order` | 类型化下单，`notify` 三态 |
 | POST | `/api/v1/tdxquant/trade/cancel` | 撤单并做状态对账 |
 | GET | `/api/v1/tdxquant/trade/orders` | 委托查询 |
@@ -431,7 +437,9 @@ ws://127.0.0.1:8000/ws?client_id=demo&api_key=<JINGNI_API_KEY>
 | `trade_event` | 服务端 → 客户端 | 交易事件（预留） |
 | `error` | 服务端 → 客户端 | 错误信息 |
 
-当前行情推送依赖 xtquant；本机没有 xtquant SDK 时，订阅会返回 `xtdata 模块不可用`。
+**行情/交易事件推送默认不支持**。行情订阅需显式设置 `JINGNI_WS_MARKET_DATA=1`，否则返回 `NOT_SUPPORTED`；GM/TDX 没有行情 WebSocket。`trade_event` 仅预留，订阅会返回 `NOT_SUPPORTED`。需要实时行情请使用各 Provider 的数据 RPC 主动轮询。
+
+WebSocket RPC 只支持 `xtdata`、`xttrader`、`gmdata`、`gmtrade`；TDX 没有 WebSocket RPC（走 WS 会返回 `USE_HTTP_ENDPOINT`）。WS 的 `gmtrade` 查询走 `gm.api`，不是 `GMTradeProxy` sidecar。
 
 ---
 
@@ -441,39 +449,45 @@ ws://127.0.0.1:8000/ws?client_id=demo&api_key=<JINGNI_API_KEY>
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-当前基线：
+当前基线（`.venv` 已安装 xtquant SDK，但本机未启动 MiniQMT）：
 
 ```text
-89 passed, 5 skipped
+225 passed, 31 skipped
 ```
+
+xtquant 的 HTTP/WS live 用例会先探测 `xtdata.get_client()`；连接不到 MiniQMT 时整组跳过，不会把“终端未启动”误报成代码失败。启动 MiniQMT 并配置 `JINGNI_QMT_ACCOUNT` 后，这些用例会自动转为真实执行。
 
 按模块：
 
 ```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_capabilities.py -q
 .\.venv\Scripts\python.exe -m pytest tests/test_tdx_trade.py -q
 .\.venv\Scripts\python.exe -m pytest tests/test_gm_trade.py -q
 .\.venv\Scripts\python.exe -m pytest tests/test_gmtrade_proxy.py -q
 ```
 
-测试不会主动下实盘单；TDX/GM 真实交易需要交易时段和显式配置。
+测试不会主动下实盘单；TDX/GM 真实交易需要交易时段和显式配置。真实终端联调按 `真实环境联调清单.md` 执行。
 
 ---
 
 ## 已知限制
 
-1. **xtquant 未真实联调**：本机 QMT 安装目录下只有 `ptrade`，没有 QMT/xtquant。
-2. **GM 事件回调未启用**：`gmtrade.start()` 在仿真端点返回 `-1`，当前交易状态通过 `get_orders()` 轮询。
-3. **GM sidecar 单账户**：当前只登录一个 `JINGNI_GM_ACCOUNT_ID`；多账户需要改成按账户路由。
-4. **TDX 分钟数据缺失**：依赖终端盘后数据/Level2，网关无法凭空补齐。
-5. **TDX 收盘后 OMS 不可用**：真实委托验收需交易时段。
-6. **TDX `notify=1` 需人工确认**：已验证 `pending_confirm` → 客户端确认 → `open` → 撤单；pending 幂等窗口独立配置为 30 分钟，避免超时重放重复发送确认信号。
-7. **TDX 委托状态查询有延迟**：市价卖出成交后约 20 秒内查询仍可能显示 `open`，应以持仓和资金变化对账，不能只看委托状态。
-8. **未推送远端、未改写 Git 历史**：旧凭据清理需单独授权。
+1. **xtquant 未真实联调**：SDK 已复制到 `.venv`，但本机未启动 MiniQMT；默认 `MINI_QMT_PATH` 指向不存在的 `D:\gjzq\qmt\userdata_mini`，账户 ID 为空。
+2. **实时推送默认关闭**：行情 WebSocket 需 `JINGNI_WS_MARKET_DATA=1`，且未做实盘验证；交易事件推送未实现；GM/TDX 没有行情 WS；交易状态请用 `/trade/orders` 轮询。
+3. **GM 高级交易未实现**：`gmtrade` 只有 `get_cash/get_position/get_orders` 三个查询 action，以及类型化 `order_volume/order_cancel`；信用、期权、基金、IPO、债券、算法单等不开放。
+4. **GM sidecar 单账户**：当前只登录一个 `JINGNI_GM_ACCOUNT_ID`；多账户需要改成按账户路由。
+5. **TDX 分钟数据缺失**：当前 mock 终端无 `.lc1/.lc5` 等分钟缓存，`1m/5m/15m/30m/1h` 为空；`1d` 正常。网关无法凭空补齐，需终端下载/开通数据。
+6. **TDX 收盘后 OMS 行为不稳定**：连续竞价时段已实测可下单/撤单；收盘后能否提交取决于终端 OMS，需按实际返回判断。
+7. **TDX `notify=1` 需人工确认**：已验证 `pending_confirm` → 客户端确认 → `open` → 撤单；pending 重放会查询真实委托并对账（返回 `pending_reconciled=true`），不再返回陈旧 `pending_confirm`。实测客户端 pending 可存活 51 分钟，因此 pending 幂等窗口默认改为 6 小时（覆盖交易时段），避免 30 分钟后重放再发一个仍可确认的信号。
+8. **TDX 委托状态查询有延迟**：市价卖出成交后约 20 秒内查询仍可能显示 `open`，应以持仓和资金变化对账，不能只看委托状态。
+9. **GM `last_tick` 不可用且会占用数据 lane**：2026-11-24 盘中返回 `1030`，收盘后偶发 `UnicodeDecodeError`，15:00 仍为 `1030`；该调用会短时占住 GM 单线程数据 lane。`current_price` 14:47 客户端 45 秒超时、服务端 48.8 秒才成功，14:53 重试 22.9 秒、15:00 26.3 秒；调用方超时应至少 60 秒，采集脚本已把 `current_price` 放到 `last_tick` 之前，业务侧不要主动调用 `last_tick`。
+10. **未推送远端、未改写 Git 历史**：旧凭据清理需单独授权。
 
 ---
 
 ## 相关文档
 
+- [`功能矩阵.md`](功能矩阵.md)：已支持 / 明确不支持 / 类型化交易能力边界
 - `tdx-spike-实测记录.md`：TDX tqcenter、notify、幂等、gmtrade sidecar 实测记录
 - `代码问题评估与tdxquant接入规划.md`：历史问题评估与接入规划
 - `方案复核意见与优化建议.md`：对评估方案的外部复核意见

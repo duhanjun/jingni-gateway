@@ -1,0 +1,21 @@
+ID,系统,测试项,结果,关键证据
+B01,TDX,盘中基线,通过,cash=asset=1000147.22；TotalFreeze=0.00；positions=0；orders=0
+B02,GM,盘中基线,通过,nav=available=99977.8999614716；cum_commission=20；positions=0；orders=0
+T01,TDX,普通限价买入→撤单,通过,order_id=244068；status=1→0；cancel_state=confirmed；polls=4；attempts=2；cash 不变
+T02,TDX,notify=1 pending 首次发送,通过,client_order_id=itest-tdx-notify-30m-20261125-1335；13:34:19；state=pending_confirm；order_id=null；pending_since=133419
+T03,TDX,30 分钟后同 client id 重放,通过,14:05 左右；idempotent_replay=true；pending_since=133419；orders 1→1；无新增
+T04,TDX,网关重启后重放,通过,14:07:38 新网关；idempotent_replay=true；pending_since=133419；orders 仍 1；SQLite 命中
+T05,TDX,pending 客户端确认,通过,order_id=305718；14:32:50；600000.SH 买 100 @10.000；status=1；filled=0；pending 存活约 58m31s
+T06,TDX,撤单与现金恢复,通过,305718 status=0；撤单瞬间 cash=999146.92 asset=1000147.22；14:52:18 恢复 cash=asset=1000147.22
+T07,TDX,确认后重放 reconciliation,通过,order_id=305718；state=accepted；status=0；pending_reconciled=true；无新增
+D01,TDX,日线数据 14:12,通过,Close=10.57；Volume=41108944；Amount=43522.39；3 行
+D02,TDX,分钟数据,受限,1m/5m/15m/30m/1h 全部 success=true、data={}；无 bar
+D03,TDX,快照 14:12 与收盘,通过,14:12 Now=10.57 Volume=411089 Amount=43522.39；14:59:54 Now=10.64 Volume=692613 Amount=73510.10
+D04,TDX,列表/板块/可转债,通过,market 5/7/8/53=5584/1700/1494/358；sector 880201=38；kzz 123039 空
+D05,TDX,refresh_cache,通过,success=true；ErrorId=0；Msg=Refresh Cache Success.；run_id=2
+G01,GM,限价买入→撤单,通过,601398.SH 100 @9.00；order_id=0999d34f-e897-11f1-b404-00163e022aa6；status=1→5；cash 不变；positions=0
+G02,GM,幂等重放,通过,idempotent_replay=true；同一 order_id；缓存 status=1；当前查询 status=5；无新增
+G03,GM,current_price 延迟,通过,首次 39145.8ms；热 159.8ms；重启后首次 36624.9ms；热 153.5ms；收盘 105.5ms
+G04,GM,last_tick 错误边界,受限,success=false；GM_SDK_ERROR；GmError status=1030 该函数不支持在当前策略运行模式
+G05,GM,外部策略单观察,通过,14:22/14:52/14:54 查询仅有本轮 601398 单；无 538c7853... 的 600000 @9.69 单
+R01,回归,全量 pytest,通过,225 passed；31 skipped；1 warning；17.16s

@@ -10,12 +10,23 @@
 tests/
 ├── __init__.py              # 测试包初始化
 ├── test_config.py           # 测试配置和工具函数
+├── xtquant_runtime.py       # 探测 MiniQMT 行情/交易服务是否可达
 ├── test_api_health.py       # API 健康检查测试
 ├── test_api_websocket.py    # WebSocket 连接测试
 ├── test_xtquant_data.py     # XtQuant 数据接口测试
 ├── test_xtquant_trader.py   # XtQuant 交易接口测试
 ├── test_gm_data.py          # GM 数据接口测试
-└── test_gm_trader.py        # GM 交易接口测试
+├── test_gm_trader.py        # GM 交易接口测试
+├── test_tdx_trade.py        # TDX 类型化交易测试
+├── test_capabilities.py     # 能力矩阵与 supported/unsupported 过滤测试
+├── test_rpc_safety.py       # 白名单、阻塞函数、超时回归测试
+├── test_sdk_compat.py       # 26 项 SDK 缺口兼容层测试
+├── test_xt_initialization.py # xtquant session_id / start / connect 测试
+├── test_xt_cancel_reconcile.py # xtquant 撤单终态对账测试
+├── test_gm_cancel_window.py  # GM 撤单窗口与 BJSE 测试
+├── test_tdx_error_payload.py # TDX ErrorId 错误载荷测试
+├── test_timeout_contract.py  # 超时契约与 args/timeout 测试
+└── test_capability_boundaries.py # 能力边界入口层测试
 ```
 
 ## 🚀 快速开始
@@ -26,6 +37,10 @@ tests/
 - pytest >= 7.0
 - requests >= 2.28
 - websockets >= 10.0
+
+xtquant live 用例需要同时满足：`.venv` 内已安装 `xtquant` SDK、MiniQMT 行情服务已启动（`xtdata.get_client()` 可连接）、交易用例还需配置 `JINGNI_QMT_ACCOUNT`。不满足时用例自动 skip，而不是失败。
+
+当前基线（SDK 已安装、MiniQMT 未启动）：`225 passed, 31 skipped`。新增用例全部离线运行，不依赖三款软件的真实运行环境。
 
 ### 安装测试依赖
 
@@ -176,6 +191,17 @@ export JINGNI_BASE_URL="http://localhost:8000"
 | `test_order_value` | 按价值下单 |
 | `test_get_cash` | 获取资金 |
 | `test_get_position` | 获取持仓 |
+
+### 7. 能力矩阵测试 (test_capabilities.py)
+
+| 测试项 | 说明 |
+|--------|------|
+| `test_gm_gmtrade_only_three_queries_supported` | GM `gmtrade` 只支持三个查询 |
+| `test_tdx_trade_is_typed_only` | `tdxtrade` 不开放通用 RPC |
+| `test_tdx_known_unsupported_functions_are_explicit` | TDX 扩展数据/订阅明确不支持 |
+| `test_runtime_missing_is_filtered_out` | 运行时缺失函数从 supported 中剔除 |
+| `test_gm_http_surfaces_only_supported` | `/rpc/whitelist`、`/rpc/methods` 只暴露 supported |
+| `test_websocket_rpc_uses_capability_gate` | WS RPC 对明确不支持返回 `NOT_SUPPORTED` |
 
 ## 📝 测试输出格式
 
