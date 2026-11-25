@@ -25,6 +25,41 @@ _lock = threading.Lock()
 
 VALID_LANES = ("data", "trade", "bulk")
 
+MIN_TIMEOUT = 0.05
+API_MIN_TIMEOUT = 1.0
+MAX_TIMEOUT = 600.0
+DEFAULT_TIMEOUT = 30.0
+
+
+def normalize_timeout(
+    value: Any, default: float = DEFAULT_TIMEOUT, minimum: float = MIN_TIMEOUT
+) -> float:
+    """把超时值收敛到 [minimum, 600] 秒。
+
+    ``None`` 是危险输入：``asyncio.wait_for(future, None)`` 会永久等待，
+    因此这里统一替换为默认值；越界值按边界截断并记录告警。
+    对外 API 入口用 ``minimum=API_MIN_TIMEOUT``（1 秒），
+    内部执行器允许亚秒级超时（短查询与测试）。
+    """
+    if value is None:
+        return default
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"非法超时值: {value!r}") from exc
+
+    if timeout != timeout:  # NaN
+        raise ValueError("非法超时值: NaN")
+    if timeout < minimum:
+        logger.warning(
+            "超时值 %.2fs 小于下限，按 %.2fs 处理", timeout, minimum
+        )
+        return minimum
+    if timeout > MAX_TIMEOUT:
+        logger.warning("超时值 %.2fs 超过上限，按 %.0fs 处理", timeout, MAX_TIMEOUT)
+        return MAX_TIMEOUT
+    return timeout
+
 
 def _executor_key(module: str, lane: str) -> Tuple[str, str]:
     """
@@ -84,7 +119,7 @@ async def run_module_call(
     loop = asyncio.get_running_loop()
     call = functools.partial(func, *args, **(kwargs or {}))
     future = loop.run_in_executor(get_executor(module, lane), call)
-    return await asyncio.wait_for(future, timeout=timeout)
+    return await asyncio.wait_for(future, timeout=normalize_timeout(timeout))
 
 
 def shutdown_executors(wait: bool = False) -> None:

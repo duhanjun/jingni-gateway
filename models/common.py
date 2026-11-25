@@ -8,8 +8,8 @@
     SymbolConvertRequest: 股票代码转换请求模型
 """
 
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any
 
 
 class RpcExecuteRequest(BaseModel):
@@ -36,7 +36,8 @@ class RpcExecuteRequest(BaseModel):
     function: str
     args: List[Any] = []
     kwargs: Dict[str, Any] = {}
-    timeout: Optional[int] = 30
+    # 必须有界：None 会让 future.result(None) 永久阻塞。
+    timeout: int = Field(30, ge=1, le=600, description="执行超时（秒），1–600")
 
 
 class SymbolConvertRequest(BaseModel):

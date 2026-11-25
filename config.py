@@ -61,6 +61,9 @@ class GMConfig:
         account_id: Optional[str] = None,
         gmtrade_python: Optional[str] = None,
         gmtrade_endpoint: Optional[str] = None,
+        cancel_reconcile_timeout: Optional[float] = None,
+        cancel_poll_interval: Optional[float] = None,
+        cancel_poll_max_interval: Optional[float] = None,
     ):
         """
         初始化 GM 配置。所有凭据默认从环境变量读取，不再硬编码。
@@ -90,6 +93,20 @@ class GMConfig:
         self.gmtrade_endpoint: str = (
             gmtrade_endpoint if gmtrade_endpoint is not None
             else (os.getenv("JINGNI_GMTRADE_ENDPOINT", "") or "api.myquant.cn:9000")
+        )
+
+        # 撤单终态对账窗口：原实现固定 4×0.3s=1.2s，晚到的终态会被误判为失败。
+        self.cancel_reconcile_timeout: float = float(
+            cancel_reconcile_timeout if cancel_reconcile_timeout is not None
+            else os.getenv("JINGNI_GM_CANCEL_RECONCILE_TIMEOUT", "5")
+        )
+        self.cancel_poll_interval: float = float(
+            cancel_poll_interval if cancel_poll_interval is not None
+            else os.getenv("JINGNI_GM_CANCEL_POLL_INTERVAL", "0.2")
+        )
+        self.cancel_poll_max_interval: float = float(
+            cancel_poll_max_interval if cancel_poll_max_interval is not None
+            else os.getenv("JINGNI_GM_CANCEL_POLL_MAX_INTERVAL", "1.0")
         )
 
         env_enabled = os.getenv("JINGNI_GM_ENABLED")
@@ -159,7 +176,7 @@ class TDXConfig:
         # 单独放宽，避免同 client_order_id 重放时再次向客户端发送确认信号。
         self.pending_idempotency_ttl = int(
             pending_idempotency_ttl if pending_idempotency_ttl is not None
-            else os.getenv("JINGNI_TDX_PENDING_IDEMPOTENCY_TTL", "1800")
+            else os.getenv("JINGNI_TDX_PENDING_IDEMPOTENCY_TTL", "21600")
         )
 
 
@@ -242,6 +259,17 @@ class Config:
     # xtquant 连接超时时间（秒）
     # 连接 QMT 客户端时的最大等待时间
     CONNECT_TIMEOUT: int = 30
+
+    # QMT 会话 ID（session_id）
+    # 留空时网关按资金账户生成稳定 ID；同一账户重启复用，避免幽灵会话。
+    QMT_SESSION_ID: Optional[int] = None
+
+    # xtquant SDK 缺失函数兼容层开关（26 项缺口中的可派生项）
+    XT_SDK_COMPAT: bool = True
+
+    # xtquant 撤单终态对账窗口与轮询间隔（秒）
+    XT_CANCEL_RECONCILE_TIMEOUT: float = 5.0
+    XT_CANCEL_POLL_INTERVAL: float = 0.2
     
     # ============================================
     # gm (掘金量化) 配置
@@ -273,6 +301,11 @@ class Config:
     # WebSocket 最大客户端连接数
     MAX_CONNECTIONS: int = 100
 
+    # WebSocket 行情推送开关
+    # 默认关闭：当前 xtdata 全推订阅需要回调 + 事件循环桥接，未完成实盘验证前
+    # 按功能矩阵的“明确不支持”处理，订阅请求会返回 NOT_SUPPORTED。
+    WS_MARKET_DATA_ENABLED: bool = False
+
 
 # 全局配置实例
 # 在项目中通过以下方式导入使用:
@@ -302,6 +335,29 @@ def _load_env_config():
 
     if os.getenv("JINGNI_QMT_ACCOUNT"):
         config.ACCOUNT_ID = os.getenv("JINGNI_QMT_ACCOUNT")
+
+    if os.getenv("JINGNI_QMT_SESSION_ID"):
+        config.QMT_SESSION_ID = int(os.getenv("JINGNI_QMT_SESSION_ID"))
+
+    if os.getenv("JINGNI_XT_COMPAT"):
+        config.XT_SDK_COMPAT = os.getenv("JINGNI_XT_COMPAT").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
+
+    if os.getenv("JINGNI_XT_CANCEL_RECONCILE_TIMEOUT"):
+        config.XT_CANCEL_RECONCILE_TIMEOUT = float(
+            os.getenv("JINGNI_XT_CANCEL_RECONCILE_TIMEOUT")
+        )
+
+    if os.getenv("JINGNI_XT_CANCEL_POLL_INTERVAL"):
+        config.XT_CANCEL_POLL_INTERVAL = float(
+            os.getenv("JINGNI_XT_CANCEL_POLL_INTERVAL")
+        )
+
+    if os.getenv("JINGNI_WS_MARKET_DATA"):
+        config.WS_MARKET_DATA_ENABLED = os.getenv(
+            "JINGNI_WS_MARKET_DATA"
+        ).strip().lower() in ("1", "true", "yes", "on")
 
     if os.getenv("JINGNI_GM_TOKEN"):
         config.GM.token = os.getenv("JINGNI_GM_TOKEN")

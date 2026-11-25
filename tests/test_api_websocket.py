@@ -29,10 +29,11 @@ from tests.test_config import (
     _print_result,
     print_test_header
 )
+from tests.xtquant_runtime import XTQUANT_RUNTIME_AVAILABLE
 
 requires_xtdata = pytest.mark.skipif(
-    not XTDATA_AVAILABLE,
-    reason="需要本机安装 xtquant SDK",
+    not (XTDATA_AVAILABLE and XTQUANT_RUNTIME_AVAILABLE),
+    reason="需要本机安装 xtquant SDK，并启动 MiniQMT 行情服务",
 )
 
 

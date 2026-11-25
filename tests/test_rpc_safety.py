@@ -59,6 +59,20 @@ def test_validate_kwargs_allows_var_keyword():
     validate_kwargs(sample, {"a": 1, "anything": 2})
 
 
+def test_validate_kwargs_binds_positional_args():
+    def sample(a, b=2):
+        return a + b
+
+    # a 由位置参数提供，不再要求 kwargs 里出现
+    validate_kwargs(sample, {}, [1])
+    validate_kwargs(sample, {"b": 3}, [1])
+
+    with pytest.raises(InvalidRpcArguments) as exc:
+        validate_kwargs(sample, {}, [])
+
+    assert exc.value.missing == ["a"]
+
+
 def test_validate_kwargs_ignores_uninspectable_callable():
     class NoSignature:
         @property

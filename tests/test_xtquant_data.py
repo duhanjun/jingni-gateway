@@ -31,6 +31,12 @@ from tests.test_config import (
     print_test_header,
     print_data_summary
 )
+from tests.xtquant_runtime import XTQUANT_RUNTIME_AVAILABLE
+
+pytestmark = pytest.mark.skipif(
+    not XTQUANT_RUNTIME_AVAILABLE,
+    reason="需要运行中的 MiniQMT 行情服务",
+)
 
 client = TestClient(app)
 

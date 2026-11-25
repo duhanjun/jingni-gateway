@@ -14,6 +14,7 @@ JingNiGateway - 量化数据网关服务
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+import asyncio
 import json
 import logging
 import uvicorn
@@ -22,13 +23,19 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
 
 from config import config
 from api import gm_router, xtquant_router, tdx_router, get_api_key
-from api.xtquant import get_xtquant_provider, set_xtquant_provider
+from api.xtquant import get_xtquant_provider
 from api.gm import get_gm_provider, set_gm_provider
 from api.tdxquant import get_tdx_provider, set_tdx_provider
 from core.websocket import ConnectionManager, WebSocketCallbackHandler
-from core.rpc import execute_rpc_call, initialize_modules, create_xttrader_instance, get_xttrader_instance, _xttrader_instance as rpc_xttrader_instance
+from core.rpc import (
+    execute_rpc_call,
+    initialize_modules,
+    create_xttrader_instance,
+    execute_xttrader_method,
+    get_xttrader_instance,
+    get_xttrader_state,
+)
 from core.executor import shutdown_executors
-from core.whitelist import RPC_WHITELIST
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
@@ -171,6 +178,7 @@ def _print_startup_summary():
     logger.info(f"    ├── WS   /ws                    - WebSocket")
     logger.info(f"    ├── GET  /api/v1/gm/            - GM API")
     logger.info(f"    ├── GET  /api/v1/xtquant/       - XtQuant API")
+    logger.info(f"    └── GET  /api/v1/tdxquant/      - TdxQuant API (HTTP only)")
     logger.info("")
     logger.info("=" * 60)
 
@@ -181,6 +189,8 @@ async def lifespan(app: FastAPI):
     global gm_provider
 
     logger.info("正在启动量化数据网关服务...")
+
+    ws_callback_handler.set_loop(asyncio.get_running_loop())
 
     initialize_modules()
 
@@ -252,16 +262,25 @@ def _init_xttrader():
             xttrader_instance = get_xttrader_instance()
             if xttrader_instance:
                 logger.info("  正在启动交易服务...")
-                xttrader_instance.start()
+                start_result = execute_xttrader_method("start", [], {})
+                if not start_result.get("success"):
+                    logger.warning(f"XtTrader start 失败: {start_result.get('error')}")
+                    return False
                 
                 logger.info("  正在连接交易服务器...")
-                connect_result = xttrader_instance.connect()
+                connect_result = execute_xttrader_method("connect", [], {})
+                state = get_xttrader_state()
                 
-                if connect_result == 0:
-                    logger.info("  XtTrader 连接成功")
+                if connect_result.get("success"):
+                    logger.info(
+                        "  XtTrader 连接成功 (session_id=%s, state=%s)",
+                        result.get("session_id"), state,
+                    )
                     return True
                 else:
-                    logger.warning(f"XtTrader 连接失败，错误码: {connect_result}")
+                    logger.warning(
+                        f"XtTrader 连接失败，返回码: {connect_result.get('data')}"
+                    )
                     return False
         else:
             logger.error(f"XtTrader 实例创建失败: {result.get('error')}")
@@ -308,7 +327,18 @@ async def root():
             }
         },
         "websocket_support": True,
-        "architecture": "RPC + WebSocket"
+        "websocket_rpc_modules": ["xtdata", "xttrader", "gmdata", "gmtrade"],
+        "websocket_market_data": bool(
+            getattr(config, "WS_MARKET_DATA_ENABLED", False)
+        ),
+        "websocket_trade_events": False,
+        "architecture": "RPC + WebSocket",
+        "boundaries": {
+            "tdx_websocket_rpc": False,
+            "tdx_transport": "http_only",
+            "trade_event_push": False,
+            "multi_account": False,
+        },
     }
 
 
@@ -334,17 +364,41 @@ async def health_check():
         "gm_available": gm_available,
         "tdx_available": tdx_available,
         "tdx_initialized": tdx_provider.is_initialized if tdx_provider else False,
+        "xttrader_state": get_xttrader_state(),
+        "ws_market_data": bool(getattr(config, "WS_MARKET_DATA_ENABLED", False)),
         "connections": ws_manager.get_stats()
     }
 
 
 @app.get("/api/v1/stats")
 async def get_stats(api_key: str = Depends(get_api_key)):
-    """获取服务统计信息。"""
+    """获取服务统计信息与各 Provider 的 supported RPC 清单。"""
+    from api.gm import _gm_capability_snapshot
+    from api.tdxquant import _tdx_capability_snapshot
+    from api.xtquant import _xtquant_capability_snapshot
+
+    snapshots = {
+        "xtquant": _xtquant_capability_snapshot(),
+        "gm": _gm_capability_snapshot(),
+        "tdxquant": _tdx_capability_snapshot(),
+    }
+
     return {
         "success": True,
         "connections": ws_manager.get_stats(),
-        "whitelist": RPC_WHITELIST
+        "capabilities": {
+            name: snapshot["rpc"]["supported"]
+            for name, snapshot in snapshots.items()
+        },
+        "compat": {
+            name: snapshot["rpc"]["compat"]
+            for name, snapshot in snapshots.items()
+        },
+        "counts": {
+            name: snapshot["rpc"]["counts"]
+            for name, snapshot in snapshots.items()
+        },
+        "policy": "只返回 supported；完整矩阵见各 Provider 的 /rpc/capabilities",
     }
 
 
@@ -371,7 +425,6 @@ async def websocket_endpoint(
         return
 
     try:
-        import asyncio
         asyncio.create_task(ws_manager.start_message_dispatcher(client_id))
 
         while True:
@@ -398,6 +451,8 @@ async def _handle_ws_message(client_id: str, message: dict):
         await _handle_subscribe_whole_quote(client_id, message)
     elif msg_type == "unsubscribe_quote":
         await _handle_unsubscribe_quote(client_id, message)
+    elif msg_type in ("subscribe_trade_event", "subscribe_trade"):
+        await _handle_subscribe_trade_event(client_id, message)
     elif msg_type == "rpc_call":
         await _handle_rpc_call(client_id, message)
     elif msg_type == "ping":
@@ -419,8 +474,25 @@ async def _handle_ws_message(client_id: str, message: dict):
 
 
 async def _handle_subscribe_quote(client_id: str, message: dict):
-    """处理行情订阅请求。"""
+    """处理行情订阅请求。
+
+    边界：行情推送当前明确不支持（xtdata 全推需要回调 + 事件循环桥接，未做
+    实盘验证），默认直接返回 ``NOT_SUPPORTED``，避免“订阅成功但永远没数据”。
+    """
     stock_code = message.get("stock_code")
+
+    if not getattr(config, "WS_MARKET_DATA_ENABLED", False):
+        await ws_manager.send_to_client(client_id, {
+            "type": "error",
+            "error_code": "NOT_SUPPORTED",
+            "feature": "market_data_push",
+            "message": (
+                "行情 WebSocket 推送未启用；请用 HTTP /rpc/execute 轮询 "
+                "xtdata.get_full_tick / get_market_data"
+            ),
+        })
+        return
+
     period = message.get("period", "tick")
 
     if not stock_code:
@@ -477,8 +549,24 @@ async def _handle_subscribe_quote(client_id: str, message: dict):
 
 
 async def _handle_subscribe_whole_quote(client_id: str, message: dict):
-    """处理全量行情订阅请求。"""
+    """处理全量行情订阅请求。
+
+    边界：与单标的订阅相同，默认关闭；开启后仍需 SDK 提供带 callback 的
+    ``subscribe_whole_quote``，否则数据不会到达客户端。
+    """
     code_list = message.get("code_list")
+
+    if not getattr(config, "WS_MARKET_DATA_ENABLED", False):
+        await ws_manager.send_to_client(client_id, {
+            "type": "error",
+            "error_code": "NOT_SUPPORTED",
+            "feature": "market_data_push",
+            "message": (
+                "全量行情 WebSocket 推送未启用；当前 xtdata 全推订阅缺少回调桥接，"
+                "请改用 HTTP 轮询"
+            ),
+        })
+        return
 
     if not code_list:
         await ws_manager.send_to_client(client_id, {
@@ -495,8 +583,26 @@ async def _handle_subscribe_whole_quote(client_id: str, message: dict):
         return
 
     try:
+        import inspect
         from xtquant import xtdata
-        seq = xtdata.subscribe_whole_quote(code_list=code_list)
+
+        params = inspect.signature(xtdata.subscribe_whole_quote).parameters
+        if "callback" not in params:
+            await ws_manager.send_to_client(client_id, {
+                "type": "error",
+                "error_code": "NOT_SUPPORTED",
+                "feature": "market_data_push",
+                "message": (
+                    "当前 SDK 的 subscribe_whole_quote 不接受 callback，"
+                    "全量行情无法推送；请改用 HTTP 轮询"
+                ),
+            })
+            return
+
+        callback = ws_callback_handler.create_quote_callback(
+            client_id, "*", "tick"
+        )
+        seq = xtdata.subscribe_whole_quote(code_list=code_list, callback=callback)
 
         if seq > 0:
             ws_manager.add_subscription(client_id, "whole_quote", {
@@ -555,6 +661,25 @@ async def _handle_unsubscribe_quote(client_id: str, message: dict):
         })
 
 
+async def _handle_subscribe_trade_event(client_id: str, message: dict):
+    """处理交易事件订阅请求。
+
+    边界：``trade_event`` 只是预留消息类型；xtquant 未实现交易回调，
+    GM 未接 ``gmtrade.start()``，TDX 未接回调桥接，因此统一返回不支持，
+    并明确指向轮询端点。
+    """
+    provider = message.get("provider", "xtquant")
+    await ws_manager.send_to_client(client_id, {
+        "type": "error",
+        "error_code": "NOT_SUPPORTED",
+        "feature": "trade_event_push",
+        "message": (
+            "交易事件推送未实现；请轮询 "
+            f"/api/v1/{provider}/trade/orders 获取委托状态"
+        ),
+    })
+
+
 async def _handle_rpc_call(client_id: str, message: dict):
     """处理 WebSocket RPC 调用请求。"""
     module = message.get("module")
@@ -573,6 +698,8 @@ async def _handle_rpc_call(client_id: str, message: dict):
             "success": result["success"],
             "data": result.get("data"),
             "error": result.get("error"),
+            "error_code": result.get("error_code"),
+            "support_status": result.get("support_status"),
             "execution_time_ms": result.get("execution_time_ms")
         }
 

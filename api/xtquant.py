@@ -8,9 +8,10 @@ XtQuant (迅投QMT) API 路由模块。
 
 端点说明：
     GET  /health: 健康检查
-    POST /rpc/execute: 执行 RPC 调用
-    GET  /rpc/whitelist: 获取函数白名单
-    GET  /rpc/methods: 获取可用方法列表
+    POST /rpc/execute: 执行 supported 内 RPC 调用
+    GET  /rpc/whitelist: 获取已支持函数清单
+    GET  /rpc/methods: 获取已支持方法列表
+    GET  /rpc/capabilities: 获取完整能力矩阵
     POST /symbol/convert: 股票代码格式转换
 """
 
@@ -23,7 +24,8 @@ import logging
 from models.common import RpcExecuteRequest, SymbolConvertRequest
 from providers.base import serialize_data
 from api.deps import get_api_key
-from core.executor import run_module_call
+from core.executor import API_MIN_TIMEOUT, normalize_timeout, run_module_call
+from core.capabilities import build_capability_snapshot, evaluate_rpc
 from core.rpc import InvalidRpcArguments, validate_kwargs
 from core.xt_trade import XtConfigError, XtTradeError, XtTradeService
 
@@ -73,6 +75,42 @@ def get_xt_trade_service() -> XtTradeService:
     return _xt_trade_service
 
 
+def _xttrader_probe(function: str):
+    """探测 xttrader 方法是否存在；统一复用 core.rpc 的实现。"""
+    from core.rpc import _xttrader_probe as rpc_probe
+
+    return rpc_probe(function)
+
+
+def _xtquant_capability_probe(provider, module: str):
+    if module == "xttrader":
+        return _xttrader_probe
+    if module == "xtdata":
+        ref = provider.get_module_reference("xtdata")
+        if ref is None:
+            return None
+        return lambda function: callable(getattr(ref, function, None))
+    return None
+
+
+def _xtquant_capability_snapshot() -> dict:
+    provider = get_xtquant_provider()
+    from core.rpc import get_xttrader_instance
+
+    refs = {
+        "xtdata": provider.get_module_reference("xtdata")
+        if provider.is_available else None,
+        # 有实例时用兼容代理判断“SDK 是否已恢复同名方法”
+        "xttrader": get_xttrader_instance() or provider.get_module_reference("xttrader"),
+    }
+    return build_capability_snapshot(
+        "xtquant",
+        module_refs=refs,
+        probes={"xttrader": _xttrader_probe},
+        runtime_available=provider.is_available,
+    )
+
+
 class XtOrderRequest(BaseModel):
     stock_code: str = Field(..., pattern=r"^\d{6}\.(SH|SZ|BJ)$")
     order_type: int = Field(0, ge=0, le=1, description="0 买入 / 1 卖出")
@@ -98,20 +136,25 @@ def _trade_error(message: str, code: str) -> Dict[str, Any]:
 class XtQuantRpcExecuteRequest(BaseModel):
     """
     XtQuant RPC 执行请求模型。
-    
+
     属性：
         module: 模块名称 (xtdata, xttrader)
         function: 函数名称
+        args: 位置参数（与 kwargs 互补，兼容只接受位置参数的 SDK 函数）
         kwargs: 函数参数字典
+        timeout: 执行超时（秒），1–600；不传时回退到 query 参数
     """
     module: str
     function: str
+    args: List[Any] = []
     kwargs: Dict[str, Any] = {}
+    timeout: Optional[int] = Field(None, ge=1, le=600)
 
 
 async def _execute_xtquant_rpc_call(
     module: str,
     function: str,
+    args: List[Any],
     kwargs: dict,
     timeout: int = 30
 ) -> dict:
@@ -121,6 +164,7 @@ async def _execute_xtquant_rpc_call(
     参数：
         module: 模块名称
         function: 函数名称
+        args: 位置参数
         kwargs: 函数参数
         timeout: 超时时间（秒）
     
@@ -128,6 +172,11 @@ async def _execute_xtquant_rpc_call(
         包含执行结果的字典
     """
     start_time = datetime.now()
+
+    try:
+        timeout = normalize_timeout(timeout, minimum=API_MIN_TIMEOUT)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc), "error_code": "INVALID_ARGUMENT"}
 
     provider = get_xtquant_provider()
 
@@ -139,12 +188,22 @@ async def _execute_xtquant_rpc_call(
             "function": function
         }
 
-    if not provider.is_function_whitelisted(module, function):
+    status, reason = evaluate_rpc(
+        "xtquant",
+        module,
+        function,
+        probe=_xtquant_capability_probe(provider, module),
+    )
+    if status != "supported":
         return {
             "success": False,
-            "error": f"函数 {module}.{function} 不在白名单中",
+            "error": reason or f"函数 {module}.{function} 不支持",
+            "error_code": (
+                "NOT_WHITELISTED" if status == "not_declared" else "NOT_SUPPORTED"
+            ),
+            "support_status": status,
             "module": module,
-            "function": function
+            "function": function,
         }
 
     if module == "xttrader":
@@ -152,7 +211,7 @@ async def _execute_xtquant_rpc_call(
         result = await run_module_call(
             "xttrader",
             execute_xttrader_method,
-            (function, [], kwargs),
+            (function, list(args), kwargs),
             timeout=timeout,
             lane="trade",
         )
@@ -177,14 +236,18 @@ async def _execute_xtquant_rpc_call(
     if func is None:
         return {
             "success": False,
-            "error": f"函数 {module}.{function} 未找到",
+            "error": f"函数 {module}.{function} 在当前运行时未提供",
+            "error_code": "NOT_SUPPORTED",
+            "support_status": "runtime_missing",
             "module": module,
             "function": function
         }
 
     try:
-        validate_kwargs(func, kwargs)
-        result = await run_module_call(module, func, (), kwargs, timeout=timeout)
+        validate_kwargs(func, kwargs, args)
+        result = await run_module_call(
+            module, func, tuple(args), kwargs, timeout=timeout
+        )
 
         elapsed = (datetime.now() - start_time).total_seconds()
         logger.info(f"XtQuant RPC 成功: {module}.{function}, 耗时: {elapsed:.2f}s")
@@ -260,7 +323,9 @@ async def execute_xtquant_rpc(
 ):
     """
     执行 XtQuant RPC 调用。
-    
+
+    超时优先级：请求体 timeout > query 参数 timeout > 默认 30s。
+
     参数：
         request: RPC 执行请求
         timeout: 超时时间（秒）
@@ -268,11 +333,13 @@ async def execute_xtquant_rpc(
     返回：
         执行结果
     """
+    effective_timeout = request.timeout if request.timeout is not None else timeout
     result = await _execute_xtquant_rpc_call(
         module=request.module,
         function=request.function,
+        args=request.args,
         kwargs=request.kwargs,
-        timeout=timeout
+        timeout=effective_timeout
     )
     return result
 
@@ -280,28 +347,33 @@ async def execute_xtquant_rpc(
 @router.get("/rpc/whitelist")
 async def get_xtquant_whitelist(api_key: str = Depends(get_api_key)):
     """
-    获取 XtQuant RPC 函数白名单。
-    
-    返回：
-        函数白名单字典
+    获取 XtQuant RPC 已支持函数清单。
+
+    只返回当前运行时真正可用的 supported 函数；明确不支持/未声明的函数
+    请查看 /rpc/capabilities。
     """
-    provider = get_xtquant_provider()
-    return provider.get_rpc_whitelist()
+    return _xtquant_capability_snapshot()["rpc"]["supported"]
+
+
+@router.get("/rpc/capabilities")
+async def get_xtquant_capabilities(api_key: str = Depends(get_api_key)):
+    """
+    获取 XtQuant 完整能力矩阵（supported / unsupported / typed_trade）。
+    """
+    return _xtquant_capability_snapshot()
 
 
 @router.get("/rpc/methods")
 async def list_xtquant_methods(api_key: str = Depends(get_api_key)):
     """
-    列出所有可用的 XtQuant 方法。
-    
-    返回：
-        可用方法列表
+    列出所有可通过通用 RPC 调用的 XtQuant 方法。
+
+    只包含 supported；unsupported 不会出现在这里。
     """
-    provider = get_xtquant_provider()
-    whitelist = provider.get_rpc_whitelist()
+    supported = _xtquant_capability_snapshot()["rpc"]["supported"]
 
     methods = []
-    for module, functions in whitelist.items():
+    for module, functions in supported.items():
         for func in functions:
             methods.append({
                 "module": module,

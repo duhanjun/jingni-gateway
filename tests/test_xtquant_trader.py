@@ -32,6 +32,12 @@ from tests.test_config import (
     print_test_header,
     print_data_summary
 )
+from tests.xtquant_runtime import XTQUANT_RUNTIME_AVAILABLE
+
+pytestmark = pytest.mark.skipif(
+    not (XTQUANT_RUNTIME_AVAILABLE and TEST_ACCOUNT),
+    reason="需要运行中的 MiniQMT 交易服务，并配置 JINGNI_QMT_ACCOUNT",
+)
 
 
 @pytest.fixture(scope="module")

@@ -391,14 +391,39 @@ class WebSocketCallbackHandler:
         >>> callback = handler.create_quote_callback("client1", "000001.SZ", "tick")
     """
 
-    def __init__(self, manager: ConnectionManager):
+    def __init__(self, manager: ConnectionManager, loop: Optional[asyncio.AbstractEventLoop] = None):
         """
         初始化回调处理器。
 
         参数：
             manager: ConnectionManager 实例
+            loop: 网关事件循环；SDK 回调线程用它把数据投递回 asyncio
         """
         self._manager = manager
+        self._loop = loop
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """绑定网关事件循环（lifespan 启动时调用）。"""
+        self._loop = loop
+
+    def _enqueue(self, client_id: str, message: dict) -> bool:
+        """线程安全地把消息放入客户端队列。
+
+        SDK 回调在独立线程触发，不能直接 ``asyncio.create_task``（会拿不到
+        运行中的事件循环）。这里统一走 ``call_soon_threadsafe``。
+        """
+        queue = self._manager.message_queues.get(client_id)
+        if queue is None:
+            logger.debug("客户端 %s 已离线，丢弃推送", client_id)
+            return False
+
+        loop = self._loop
+        if loop is None or loop.is_closed() or not loop.is_running():
+            logger.warning("无可用事件循环，%s 的数据被丢弃", client_id)
+            return False
+
+        loop.call_soon_threadsafe(queue.put_nowait, message)
+        return True
 
     def create_quote_callback(self, client_id: str, stock_code: str, period: str):
         """
@@ -426,12 +451,8 @@ class WebSocketCallbackHandler:
                         "timestamp": datetime.now().isoformat()
                     }
 
-                    if client_id in self._manager.message_queues:
-                        asyncio.create_task(
-                            self._manager.message_queues[client_id].put(message)
-                        )
-
-                    logger.debug(f"行情推送: {code} -> 客户端 {client_id}")
+                    if self._enqueue(client_id, message):
+                        logger.debug(f"行情推送: {code} -> 客户端 {client_id}")
             except Exception as e:
                 logger.error(f"行情回调错误: {e}")
 
@@ -459,12 +480,8 @@ class WebSocketCallbackHandler:
                     "timestamp": datetime.now().isoformat()
                 }
 
-                if client_id in self._manager.message_queues:
-                    asyncio.create_task(
-                        self._manager.message_queues[client_id].put(message)
-                    )
-
-                logger.debug(f"交易回调: {callback_type} -> 客户端 {client_id}")
+                if self._enqueue(client_id, message):
+                    logger.debug(f"交易回调: {callback_type} -> 客户端 {client_id}")
             except Exception as e:
                 logger.error(f"交易回调错误: {e}")
 
