@@ -70,3 +70,4 @@ temp/
 test_reports/
 # 本地幂等/状态数据库（含委托流水，不入库）
 data/*.sqlite3
+data/itest/

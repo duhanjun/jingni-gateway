@@ -1,0 +1,88 @@
+{
+  "item": "04_tdx_minute_data",
+  "trade_date": "2026-11-25",
+  "captured_at": "2026-11-25 17:39:22",
+  "mode": "dry-run",
+  "account_scope": "simulated",
+  "verdict": "SKIPPED_GATEWAY_UNREACHABLE",
+  "criteria": [
+    "1m/5m/15m/30m/1h：success=true 且对应周期 bar 非空，最新 bar 时间接近当前时间",
+    "若分钟周期仍为空：记为终端数据 / 权限限制（EMPTY），不判网关缺陷",
+    "1d 作为对照：应正常返回最新 Close/Volume",
+    "参数名必须用 stock_list；stock_code 应被入口层拒绝 INVALID_ARGUMENT"
+  ],
+  "read_only": {
+    "health": {
+      "success": false,
+      "client_error": true,
+      "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+    },
+    "market_data": {
+      "1m": {
+        "verdict": "UNREACHABLE",
+        "response": {
+          "success": false,
+          "client_error": true,
+          "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+        }
+      },
+      "5m": {
+        "verdict": "UNREACHABLE",
+        "response": {
+          "success": false,
+          "client_error": true,
+          "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+        }
+      },
+      "15m": {
+        "verdict": "UNREACHABLE",
+        "response": {
+          "success": false,
+          "client_error": true,
+          "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+        }
+      },
+      "30m": {
+        "verdict": "UNREACHABLE",
+        "response": {
+          "success": false,
+          "client_error": true,
+          "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+        }
+      },
+      "1h": {
+        "verdict": "UNREACHABLE",
+        "response": {
+          "success": false,
+          "client_error": true,
+          "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+        }
+      },
+      "1d": {
+        "verdict": "UNREACHABLE",
+        "response": {
+          "success": false,
+          "client_error": true,
+          "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+        }
+      }
+    },
+    "invalid_param_rejected": {
+      "success": false,
+      "client_error": true,
+      "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+    }
+  },
+  "planned_writes": [],
+  "notes": [
+    "网关不可达；下一交易日盘中重跑本只读脚本。"
+  ],
+  "minute_verdicts": {
+    "1m": "UNREACHABLE",
+    "5m": "UNREACHABLE",
+    "15m": "UNREACHABLE",
+    "30m": "UNREACHABLE",
+    "1h": "UNREACHABLE"
+  },
+  "daily_verdict": "UNREACHABLE"
+}

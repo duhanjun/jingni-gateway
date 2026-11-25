@@ -1,0 +1,59 @@
+{
+  "item": "01_tdx_ttl_boundary",
+  "trade_date": "2026-11-25",
+  "captured_at": "2026-11-25 17:38:31",
+  "mode": "dry-run",
+  "account_scope": "simulated",
+  "verdict": "SKIPPED_GATEWAY_UNREACHABLE",
+  "criteria": [
+    "health: available=true、initialized=true、logged_in=true",
+    "pending TTL 配置值 = 21600 秒（6 小时），普通 accepted 缓存 = 600 秒",
+    "窗口内同 client_order_id 重放：idempotent_replay=true、pending_since 不变、不新增委托",
+    "6 小时过期边界盘中无法等满，以离线单测的 TTL 数学为准；不在盘中做破坏性过期重放"
+  ],
+  "read_only": {
+    "tdx_health": {
+      "success": false,
+      "client_error": true,
+      "error": "URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>"
+    },
+    "pending_ttl_seconds": 21600,
+    "expected_ttl_seconds": 21600
+  },
+  "planned_writes": [
+    {
+      "step": "t0 发 notify=1 pending（模拟盘，不可成交限价）",
+      "method": "POST",
+      "path": "/api/v1/tdxquant/trade/order",
+      "payload": {
+        "stock_code": "600000.SH",
+        "order_type": 0,
+        "order_volume": 100,
+        "price_type": 0,
+        "price": 10.0,
+        "notify": 1,
+        "client_order_id": "itest-tdx-ttl-20261125"
+      },
+      "dry_run_blocked": true
+    },
+    {
+      "step": "窗口内同 client_order_id 重放，核对幂等",
+      "method": "POST",
+      "path": "/api/v1/tdxquant/trade/order",
+      "payload": {
+        "stock_code": "600000.SH",
+        "order_type": 0,
+        "order_volume": 100,
+        "price_type": 0,
+        "price": 10.0,
+        "notify": 1,
+        "client_order_id": "itest-tdx-ttl-20261125"
+      },
+      "dry_run_blocked": true
+    }
+  ],
+  "notes": [
+    "网关不可达；dry-run 仅完成配置核对，未连接终端。"
+  ],
+  "ttl_config_ok": true
+}
