@@ -38,7 +38,12 @@ def classify(resp: dict) -> str:
         return "ERROR"
     data = resp.get("data")
     if isinstance(data, dict):
-        data = data.get("Value", data)
+        # 网关 RPC 返回两层信封：{"success": true, "data": {"data": <payload>}}
+        # 旧逻辑只解了 Value，导致空 payload 被误判为 DATA。
+        if "Value" in data:
+            data = data.get("Value")
+        elif "data" in data:
+            data = data.get("data")
     empty = data in (None, {}, [], "")
     return "EMPTY" if empty else "DATA"
 
