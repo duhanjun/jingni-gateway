@@ -3,7 +3,7 @@
 只做查询，不发送任何下单/撤单请求。输出：
 - GM/TDX health、资产、委托、持仓
 - open 委托计数与 order_id 列表
-- 与今日基线（GM nav≈99977.8999；TDX cash/asset≈1000147.22）的差异
+- 与今日基线（GM nav≈99967.7999，已扣除 P4-02 两笔 ETF 佣金及价差；TDX cash/asset≈1000147.22）的差异
 - D 盘剩余空间、网关 err 日志尾部异常行
 """
 from __future__ import annotations
@@ -19,10 +19,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BASE = "http://127.0.0.1:8010"
 OUT = ROOT / "data/itest/20261126/phase3_closeout_reconciliation.json"
-GM_NAV_BASELINE = 99977.89996147156
+GM_NAV_BASELINE = 99967.79994487762
 TDX_CASH_BASELINE = 1000147.22
 ASSET_TOL = 1.0
-OPEN_STATUS = {1, 2}
+OPEN_STATUS = {1, 2, 4}
 
 
 def load_env() -> dict[str, str]:
@@ -105,7 +105,7 @@ def main() -> int:
         "criteria": [
             "GM/TDX health=healthy",
             "open 委托=0、持仓=0",
-            "GM nav≈99977.8999；TDX cash=asset≈1000147.22、TotalFreeze=0",
+            "GM nav≈99967.7999（P4-02 佣金/价差后）；TDX cash=asset≈1000147.22、TotalFreeze=0",
             "无新增 Traceback/5xx；D 盘空间可用",
         ],
         "responses": {},
