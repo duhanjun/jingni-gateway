@@ -2,6 +2,7 @@
 """TdxTradeService 的纯逻辑测试：用 fake tq 验证下单映射与撤单对账。"""
 
 import asyncio
+import sqlite3
 import sys
 import time
 import types
@@ -77,6 +78,7 @@ def _make_config(tmp_path):
         timeout=5,
         cancel_reconcile_timeout=0.2,
         poll_interval=0.01,
+        pending_idempotency_ttl=21600,
     )
     return SimpleNamespace(TDX=tdx)
 
@@ -295,6 +297,96 @@ def test_idempotency_survives_service_restart(fake_env, tmp_path):
     assert len(fake.order_calls) == 1
     assert second["idempotent_replay"] is True
     assert second["order_id"] == "227988"
+
+
+def test_pending_idempotency_ttl_default_is_six_hours(fake_env):
+    """配置默认 21600 秒，覆盖一个完整交易时段的人工确认窗口。"""
+    _, service, _ = fake_env
+
+    assert service._pending_order_cache_ttl == 21600.0
+
+
+def test_pending_ttl_boundary_in_memory(fake_env):
+    """内存缓存：TTL 内重放幂等，跨过 TTL 后必须重新下单。"""
+    provider, service, fake = fake_env
+    key = "notify-ttl-boundary"
+    fake.order_result = {
+        "ErrorId": "0", "Msg": "已发送信号至客户端，待用户确认！", "Value": 1,
+    }
+    service._pending_order_cache_ttl = 1.0
+
+    first = asyncio.run(service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id=key
+    ))
+    assert first["state"] == "pending_confirm"
+
+    # 距 TTL 到期还差 0.01 秒：仍应命中幂等缓存
+    service._order_cache[key]["ts"] = time.monotonic() - 0.99
+    replay = asyncio.run(service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id=key
+    ))
+    assert replay["idempotent_replay"] is True
+    assert len(fake.order_calls) == 1
+
+    # 已跨过 TTL：缓存失效，重新发送一笔
+    service._order_cache[key]["ts"] = time.monotonic() - 1.01
+    fresh = asyncio.run(service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id=key
+    ))
+    assert fresh["idempotent_replay"] is False
+    assert len(fake.order_calls) == 2
+
+
+def test_pending_ttl_boundary_persisted(fake_env, tmp_path):
+    """SQLite 持久化缓存：TTL 边界与内存口径一致，跨重启仍生效。"""
+    provider, _, fake = fake_env
+    db_path = str(tmp_path / "tdx_idempotency_ttl.sqlite3")
+    key = "notify-ttl-persisted"
+    fake.order_result = {
+        "ErrorId": "0", "Msg": "已发送信号至客户端，待用户确认！", "Value": 1,
+    }
+
+    first_service = TdxTradeService(provider, provider._config, state_path=db_path)
+    first_service._pending_order_cache_ttl = 21600.0
+    first = asyncio.run(first_service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id=key
+    ))
+    assert first["state"] == "pending_confirm"
+
+    def set_created_at(seconds_ago: float) -> None:
+        with sqlite3.connect(db_path, timeout=2) as conn:
+            conn.execute(
+                "UPDATE tdx_order_idempotency SET created_at = ? "
+                "WHERE client_order_id = ?",
+                (time.time() - seconds_ago, key),
+            )
+            conn.commit()
+
+    # 距 6 小时到期还差 1 秒：重启后仍命中幂等
+    set_created_at(21599.0)
+    second_service = TdxTradeService(provider, provider._config, state_path=db_path)
+    second = asyncio.run(second_service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id=key
+    ))
+    assert second["idempotent_replay"] is True
+    assert len(fake.order_calls) == 1
+
+    # 已超过 6 小时：持久化条目过期删除，重新下单
+    set_created_at(21601.0)
+    third_service = TdxTradeService(provider, provider._config, state_path=db_path)
+    fresh = asyncio.run(third_service.place_order(
+        "600000.SH", 0, 100, 0, 9.00, 1, client_order_id=key
+    ))
+    assert fresh["idempotent_replay"] is False
+    assert len(fake.order_calls) == 2
+    with sqlite3.connect(db_path, timeout=2) as conn:
+        row = conn.execute(
+            "SELECT created_at FROM tdx_order_idempotency WHERE client_order_id = ?",
+            (key,),
+        ).fetchone()
+    # 旧条目已过期删除，重新下单后写入的是新的 created_at
+    assert row is not None
+    assert abs(time.time() - float(row[0])) < 5.0
 
 
 def test_probe_account_distinguishes_unlogged(fake_env):

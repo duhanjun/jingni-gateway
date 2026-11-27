@@ -114,7 +114,12 @@ def _asset_row(elapsed: float, vals: dict) -> dict:
 
 
 def main() -> int:
-    args = base_parser("TDX 撤单现金恢复采样").parse_args()
+    parser = base_parser("TDX 撤单现金恢复采样")
+    parser.add_argument(
+        "--run-tag", default="01",
+        help="同一交易日内多次采样的唯一后缀，避免 client_order_id 幂等冲突",
+    )
+    args = parser.parse_args()
     dry_run = not args.confirm_sim
     report = new_report("02_tdx_cash_recovery", args.date, dry_run)
     report["criteria"] = [
@@ -131,7 +136,9 @@ def main() -> int:
     report["read_only"]["positions"] = client.request("GET", "/api/v1/tdxquant/trade/positions")
     report["read_only"]["terminal_probe"] = {"processes": _probe_tdx_titles()}
 
-    client_order_id = f"itest-tdx-cash-{args.date.replace('-', '')}"
+    client_order_id = (
+        f"itest-tdx-cash-{args.date.replace('-', '')}-{args.run_tag}"
+    )
     report["planned_writes"] = [
         {
             "step": "模拟盘不可成交限价买入 100 股（notify=0）",
